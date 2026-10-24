@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "marketview-finance": {
+      "command": "/home/duke/.gemini/antigravity/brain/d0ca03e2-ba57-4654-bdd7-1c8fd2d8b087/scratch/node-v22.14.0-linux-x64/bin/node",
+      "args": ["/home/duke/Project/marketview/src/mcp/server.mjs"]
+    }
+  }
+}
