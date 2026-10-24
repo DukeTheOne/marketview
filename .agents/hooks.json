@@ -1,0 +1,17 @@
+{
+  "architecture-typecheck-guard": {
+    "enabled": true,
+    "PostToolUse": [
+      {
+        "matcher": "write_file|edit_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./scripts/typecheck-hook.sh",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}
