@@ -16,6 +16,8 @@ import {
   type TradeEntry,
   type TradeSide,
 } from '../../core/schemas/trade';
+import { JournalAnalyticsCard } from './JournalAnalyticsCard';
+
 
 export interface TradeJournalDrawerProps {
   isOpen: boolean;
@@ -192,6 +194,9 @@ export function TradeJournalDrawer({
           </p>
         </div>
       </div>
+
+      {/* Edge Analytics & Setup Attribution */}
+      <JournalAnalyticsCard trades={trades} summary={summary} />
 
       {/* Main Drawer Body: Log Form + Trade History Table */}
       <div className="flex flex-1 flex-col overflow-hidden lg:flex-row">

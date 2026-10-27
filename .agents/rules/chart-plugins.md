@@ -1,7 +1,6 @@
 ---
 trigger: glob
-globs:
-  - "src/features/chart/**"
+globs: "src/features/chart/**"
 description: Enforces the Open-Closed ChartOverlayPlugin registry pattern whenever an agent reads or modifies files in src/features/chart/**.
 ---
 

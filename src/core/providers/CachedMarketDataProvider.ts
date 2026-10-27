@@ -180,9 +180,16 @@ export class CachedMarketDataProvider implements MarketDataProvider {
 
     this.requestTimestamps.push(currentTime);
 
-    const promise = fetcher().finally(() => {
-      this.inFlight.delete(key);
-    });
+    const promise = fetcher()
+      .catch((err) => {
+        if (staleFallback !== undefined) {
+          return staleFallback;
+        }
+        throw err;
+      })
+      .finally(() => {
+        this.inFlight.delete(key);
+      });
 
     this.inFlight.set(key, promise);
     return promise;

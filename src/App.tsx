@@ -1,56 +1,98 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useStore } from 'zustand';
 import {
   CachedMarketDataProvider,
   DeterministicDemoProvider,
   FinnhubProvider,
   IndexedDBStorageRepository,
+  ResilientMarketDataProvider,
+  YahooFinanceProvider,
+  createAlertStore,
   createAnnotationStore,
   createMarketStore,
   createTradeJournalStore,
   createWatchlistStore,
   getCandleSeriesKey,
+  type MarketDataProvider,
 } from './core';
 import { ChartContainer } from './features/chart/ChartContainer';
 import { ChartToolbar } from './features/chart/overlays/ChartToolbar';
 import { OverlayCanvas } from './features/chart/overlays/OverlayCanvas';
 import { TradeJournalDrawer } from './features/journal/TradeJournalDrawer';
 import { TopHeaderBar } from './ui/layout/TopHeaderBar';
+import type {
+  LivePollIntervalSec,
+  ProviderMode,
+} from './ui/providers/ProviderSettingsPopover';
 import { WatchlistSidebar } from './ui/watchlist/WatchlistSidebar';
 
+function createConfiguredProvider(
+  mode: ProviderMode,
+  finnhubKey: string
+): MarketDataProvider {
+  const demoFallback = new DeterministicDemoProvider();
+  const yahooWithFallback = new ResilientMarketDataProvider(
+    new YahooFinanceProvider(),
+    demoFallback
+  );
+
+  let baseProvider: MarketDataProvider;
+  if (mode === 'finnhub' && finnhubKey.trim().length > 0) {
+    baseProvider = new ResilientMarketDataProvider(
+      new FinnhubProvider(finnhubKey.trim()),
+      yahooWithFallback
+    );
+  } else if (mode === 'yahoo') {
+    baseProvider = yahooWithFallback;
+  } else {
+    baseProvider = demoFallback;
+  }
+
+  return new CachedMarketDataProvider(baseProvider, {
+    quoteTtlMs: 12_000,
+    candlesTtlMs: 60_000,
+    maxRequestsPerMinute: 120,
+  });
+}
+
 export function App() {
-  const { marketStore, watchlistStore, annotationStore, tradeJournalStore } =
-    useMemo(() => {
-      const finnhubApiKey = import.meta.env.VITE_FINNHUB_API_KEY as
-        | string
-        | undefined;
-      const baseProvider =
-        finnhubApiKey && finnhubApiKey.trim().length > 0
-          ? new FinnhubProvider(finnhubApiKey.trim())
-          : new DeterministicDemoProvider();
+  const initialEnvKey =
+    (import.meta.env.VITE_FINNHUB_API_KEY as string | undefined)?.trim() ?? '';
+  const initialMode: ProviderMode =
+    initialEnvKey.length > 0 ? 'finnhub' : 'yahoo';
 
-      const cachedProvider = new CachedMarketDataProvider(baseProvider, {
-        quoteTtlMs: 15_000,
-        candlesTtlMs: 60_000,
-        maxRequestsPerMinute: 55,
-      });
+  const [providerMode, setProviderMode] = useState<ProviderMode>(initialMode);
+  const [finnhubApiKey, setFinnhubApiKey] = useState<string>(initialEnvKey);
+  const [pollIntervalSec, setPollIntervalSec] =
+    useState<LivePollIntervalSec>(15);
 
-      const storageRepo = new IndexedDBStorageRepository();
+  const {
+    marketStore,
+    watchlistStore,
+    annotationStore,
+    tradeJournalStore,
+    alertStore,
+  } = useMemo(() => {
+    const cachedProvider = createConfiguredProvider(initialMode, initialEnvKey);
+    const storageRepo = new IndexedDBStorageRepository();
 
-      return {
-        marketStore: createMarketStore(cachedProvider, 'AAPL', '1D'),
-        watchlistStore: createWatchlistStore(storageRepo),
-        annotationStore: createAnnotationStore(storageRepo),
-        tradeJournalStore: createTradeJournalStore(storageRepo),
-      };
-    }, []);
+    return {
+      marketStore: createMarketStore(cachedProvider, 'AAPL', '1D'),
+      watchlistStore: createWatchlistStore(storageRepo),
+      annotationStore: createAnnotationStore(storageRepo),
+      tradeJournalStore: createTradeJournalStore(storageRepo),
+      alertStore: createAlertStore(),
+    };
+  }, [initialMode, initialEnvKey]);
 
   const activeTicker = useStore(marketStore, (s) => s.activeTicker);
   const activeTimeframe = useStore(marketStore, (s) => s.activeTimeframe);
   const quotesByTicker = useStore(marketStore, (s) => s.quotesByTicker);
   const candlesByKey = useStore(marketStore, (s) => s.candlesByKey);
+  const searchResults = useStore(marketStore, (s) => s.searchResults);
   const isLoadingCandles = useStore(marketStore, (s) => s.isLoadingCandles);
   const providerId = useStore(marketStore, (s) => s.providerId);
+  const marketError = useStore(marketStore, (s) => s.error);
 
   const watchlists = useStore(watchlistStore, (s) => s.watchlists);
   const activeWatchlistId = useStore(watchlistStore, (s) => s.activeWatchlistId);
@@ -66,6 +108,12 @@ export function App() {
   const isDrawerOpen = useStore(tradeJournalStore, (s) => s.isDrawerOpen);
   const filterStatus = useStore(tradeJournalStore, (s) => s.filterStatus);
   const journalSummary = tradeJournalStore.getState().getSummary();
+
+  const alerts = useStore(alertStore, (s) => s.alerts);
+  const lastTriggeredAlertIds = useStore(
+    alertStore,
+    (s) => s.lastTriggeredAlertIds
+  );
 
   const activeWatchlist =
     watchlists.find((w) => w.id === activeWatchlistId) ?? watchlists[0];
@@ -87,10 +135,54 @@ export function App() {
   }, [marketStore, watchlistStore, annotationStore, tradeJournalStore]);
 
   useEffect(() => {
-    if (activeWatchlist && activeWatchlist.tickers.length > 0) {
-      void marketStore.getState().refreshQuotes(activeWatchlist.tickers);
+    const selectedList =
+      watchlistStore.getState().watchlists.find((w) => w.id === activeWatchlistId) ??
+      watchlistStore.getState().watchlists[0];
+    if (selectedList && selectedList.tickers.length > 0) {
+      void marketStore.getState().refreshQuotes(selectedList.tickers);
     }
-  }, [activeWatchlist, marketStore]);
+  }, [activeWatchlistId, watchlistStore, marketStore]);
+
+  // Real-time evaluation of price alerts against latest market quotes
+  useEffect(() => {
+    for (const quote of Object.values(quotesByTicker)) {
+      alertStore.getState().evaluateQuote(quote);
+    }
+  }, [quotesByTicker, alertStore]);
+
+  // Milestone 6: Live Auto-Polling Loop for real-time quotes & latest candle bar
+  useEffect(() => {
+    if (pollIntervalSec <= 0) {
+      return;
+    }
+
+    const timer = globalThis.setInterval(() => {
+      const tickersToPoll =
+        activeWatchlist && activeWatchlist.tickers.length > 0
+          ? activeWatchlist.tickers
+          : [activeTicker];
+      void marketStore.getState().refreshQuotes(tickersToPoll);
+      void marketStore.getState().refreshActiveCandles();
+    }, pollIntervalSec * 1000);
+
+    return () => {
+      globalThis.clearInterval(timer);
+    };
+  }, [pollIntervalSec, activeWatchlist, activeTicker, marketStore]);
+
+  const handleSelectProviderMode = (
+    nextMode: ProviderMode,
+    nextFinnhubKey?: string
+  ) => {
+    const resolvedKey =
+      nextFinnhubKey !== undefined ? nextFinnhubKey.trim() : finnhubApiKey;
+    setProviderMode(nextMode);
+    if (nextFinnhubKey !== undefined) {
+      setFinnhubApiKey(resolvedKey);
+    }
+    const nextProvider = createConfiguredProvider(nextMode, resolvedKey);
+    void marketStore.getState().setProvider(nextProvider);
+  };
 
   const seriesKey = getCandleSeriesKey(activeTicker, activeTimeframe);
   const activeCandles = candlesByKey[seriesKey] ?? [];
@@ -106,9 +198,34 @@ export function App() {
         activeTimeframe={activeTimeframe}
         quote={activeQuote}
         providerId={providerId}
+        providerMode={providerMode}
+        finnhubApiKey={finnhubApiKey}
+        pollIntervalSec={pollIntervalSec}
+        marketError={marketError}
         isLoading={isLoadingCandles}
         isJournalOpen={isDrawerOpen}
         tradeCount={trades.length}
+        alerts={alerts}
+        lastTriggeredAlertIds={lastTriggeredAlertIds}
+        onSelectProviderMode={handleSelectProviderMode}
+        onChangePollInterval={(sec) => {
+          setPollIntervalSec(sec);
+        }}
+        onCreateAlert={(input) => {
+          alertStore.getState().addAlert(input);
+        }}
+        onDismissAlert={(id) => {
+          alertStore.getState().dismissAlert(id);
+        }}
+        onRearmAlert={(id) => {
+          alertStore.getState().rearmAlert(id);
+        }}
+        onDeleteAlert={(id) => {
+          alertStore.getState().removeAlert(id);
+        }}
+        onClearTriggeredBanner={() => {
+          alertStore.getState().clearTriggeredBanner();
+        }}
         onSelectTimeframe={(tf) => {
           void marketStore.getState().setActiveTimeframe(tf);
         }}
@@ -129,6 +246,8 @@ export function App() {
           activeWatchlistId={activeWatchlistId}
           activeTicker={activeTicker}
           quotesByTicker={quotesByTicker}
+          searchResults={searchResults}
+          onSearchTickers={(q) => marketStore.getState().searchTickers(q)}
           onSelectWatchlist={(id) => {
             watchlistStore.getState().selectWatchlist(id);
           }}

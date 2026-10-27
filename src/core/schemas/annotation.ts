@@ -19,6 +19,7 @@ export const ChartAnnotationTypeSchema = z.enum([
   'sticker',
   'trendline',
   'trade_marker',
+  'fibonacci',
 ]);
 export type ChartAnnotationType = z.infer<typeof ChartAnnotationTypeSchema>;
 
@@ -82,6 +83,20 @@ export const TradeMarkerPayloadSchema = z.object({
   notes: z.string().default(''),
 });
 export type TradeMarkerPayload = z.infer<typeof TradeMarkerPayloadSchema>;
+
+/**
+ * Fibonacci retracement payload schema
+ */
+export const FIBONACCI_DEFAULT_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1] as const;
+
+export const FibonacciPayloadSchema = z.object({
+  color: z.string().default('#a855f7'), // purple-500
+  levels: z.array(z.number().min(0).max(2)).default([...FIBONACCI_DEFAULT_LEVELS]),
+  extendRight: z.boolean().default(false),
+  showPrices: z.boolean().default(true),
+  fillBackground: z.boolean().default(true),
+});
+export type FibonacciPayload = z.infer<typeof FibonacciPayloadSchema>;
 
 
 

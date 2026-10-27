@@ -10,7 +10,7 @@ import {
 } from '../schemas/market';
 
 export interface MarketState {
-  readonly providerId: string;
+  providerId: string;
   activeTicker: string;
   activeTimeframe: Timeframe;
   quotesByTicker: Record<string, TickerQuote>;
@@ -20,6 +20,7 @@ export interface MarketState {
   isLoadingQuotes: boolean;
   error: string | null;
 
+  setProvider: (newProvider: MarketDataProvider) => Promise<void>;
   setActiveTicker: (ticker: string) => Promise<void>;
   setActiveTimeframe: (timeframe: Timeframe) => Promise<void>;
   refreshActiveCandles: () => Promise<OHLCVCandle[]>;
@@ -38,10 +39,11 @@ export function getCandleSeriesKey(ticker: string, timeframe: Timeframe): string
  * and active symbol/timeframe state.
  */
 export function createMarketStore(
-  provider: MarketDataProvider,
+  initialProvider: MarketDataProvider,
   initialTicker = 'AAPL',
   initialTimeframe: Timeframe = '1D'
 ): MarketStore {
+  let provider = initialProvider;
   const normalizedInitialTicker = TickerSymbolSchema.parse(initialTicker);
   const validatedTimeframe = TimeframeSchema.parse(initialTimeframe);
 
@@ -55,6 +57,22 @@ export function createMarketStore(
     isLoadingCandles: false,
     isLoadingQuotes: false,
     error: null,
+
+    setProvider: async (newProvider: MarketDataProvider) => {
+      provider = newProvider;
+      set({
+        providerId: provider.id,
+        candlesByKey: {},
+        error: null,
+      });
+      const existingTickers = Object.keys(get().quotesByTicker);
+      const tickersToRefresh =
+        existingTickers.length > 0 ? existingTickers : [get().activeTicker];
+      await Promise.all([
+        get().refreshActiveCandles(),
+        get().refreshQuotes(tickersToRefresh),
+      ]);
+    },
 
     setActiveTicker: async (rawTicker: string) => {
       const ticker = TickerSymbolSchema.parse(rawTicker);
@@ -108,17 +126,32 @@ export function createMarketStore(
 
       set({ isLoadingQuotes: true });
       try {
-        const quotes = await Promise.all(
+        const settled = await Promise.allSettled(
           uniqueTickers.map((t) => provider.getQuote(t))
         );
+        const fulfilledQuotes: TickerQuote[] = [];
+        let firstError: string | null = null;
+
+        for (const res of settled) {
+          if (res.status === 'fulfilled') {
+            fulfilledQuotes.push(res.value);
+          } else if (!firstError) {
+            firstError =
+              res.reason instanceof Error
+                ? res.reason.message
+                : 'Failed to refresh quote';
+          }
+        }
+
         set((state) => {
           const nextQuotes = { ...state.quotesByTicker };
-          for (const quote of quotes) {
+          for (const quote of fulfilledQuotes) {
             nextQuotes[quote.ticker] = quote;
           }
           return {
             quotesByTicker: nextQuotes,
             isLoadingQuotes: false,
+            error: fulfilledQuotes.length > 0 ? state.error : firstError,
           };
         });
       } catch (err) {

@@ -1,5 +1,6 @@
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import {
+  Check,
   FolderPlus,
   ListFilter,
   Pencil,
@@ -7,7 +8,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import type { TickerQuote } from '../../core/schemas/market';
+import type { TickerQuote, TickerSearchResult } from '../../core/schemas/market';
 import type { Watchlist } from '../../core/schemas/watchlist';
 
 export interface WatchlistSidebarProps {
@@ -22,6 +23,8 @@ export interface WatchlistSidebarProps {
   onAddTicker: (watchlistId: string, ticker: string) => Promise<void>;
   onRemoveTicker: (watchlistId: string, ticker: string) => Promise<void>;
   onSelectTicker: (ticker: string) => void;
+  searchResults?: TickerSearchResult[];
+  onSearchTickers?: (query: string) => Promise<TickerSearchResult[]>;
 }
 
 export function WatchlistSidebar({
@@ -36,8 +39,17 @@ export function WatchlistSidebar({
   onAddTicker,
   onRemoveTicker,
   onSelectTicker,
+  searchResults,
+  onSearchTickers,
 }: WatchlistSidebarProps) {
   const [tickerInput, setTickerInput] = useState('');
+  const [internalSearchResults, setInternalSearchResults] = useState<
+    TickerSearchResult[]
+  >([]);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const searchReqIdRef = useRef(0);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const [isCreatingList, setIsCreatingList] = useState(false);
   const [newListName, setNewListName] = useState('');
   const [isRenamingList, setIsRenamingList] = useState(false);
@@ -47,11 +59,73 @@ export function WatchlistSidebar({
   const activeWatchlist =
     watchlists.find((w) => w.id === activeWatchlistId) ?? watchlists[0];
 
+  const handleTickerInputChange = (rawVal: string) => {
+    const val = rawVal.toUpperCase();
+    setTickerInput(val);
+
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+      searchDebounceRef.current = null;
+    }
+
+    const trimmed = val.trim();
+    if (trimmed.length < 1) {
+      searchReqIdRef.current += 1;
+      setInternalSearchResults([]);
+      setIsDropdownOpen(false);
+      return;
+    }
+
+    setIsDropdownOpen(true);
+    if (onSearchTickers) {
+      const reqId = ++searchReqIdRef.current;
+      searchDebounceRef.current = setTimeout(() => {
+        void onSearchTickers(trimmed)
+          .then((results) => {
+            if (reqId === searchReqIdRef.current) {
+              setInternalSearchResults(results);
+            }
+          })
+          .catch(() => {
+            if (reqId === searchReqIdRef.current) {
+              setInternalSearchResults([]);
+            }
+          });
+      }, 220);
+    }
+  };
+
+  const handleSelectSearchResult = async (item: TickerSearchResult) => {
+    if (!activeWatchlist) {
+      return;
+    }
+    const isAlreadyInWatchlist = activeWatchlist.tickers.includes(item.ticker);
+    searchReqIdRef.current += 1;
+    setIsDropdownOpen(false);
+    setInternalSearchResults([]);
+    setTickerInput('');
+    setErrorMsg(null);
+
+    if (isAlreadyInWatchlist) {
+      onSelectTicker(item.ticker);
+      return;
+    }
+
+    try {
+      await onAddTicker(activeWatchlist.id, item.ticker);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Invalid ticker symbol');
+    }
+  };
+
   const handleAddTickerSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!activeWatchlist || !tickerInput.trim()) {
       return;
     }
+    searchReqIdRef.current += 1;
+    setIsDropdownOpen(false);
+    setInternalSearchResults([]);
     setErrorMsg(null);
     try {
       await onAddTicker(activeWatchlist.id, tickerInput.trim());
@@ -89,6 +163,15 @@ export function WatchlistSidebar({
       setErrorMsg(err instanceof Error ? err.message : 'Failed to rename');
     }
   };
+
+  const effectiveSearchResults =
+    internalSearchResults.length > 0
+      ? internalSearchResults
+      : (searchResults ?? []);
+  const showAutocompleteDropdown =
+    isDropdownOpen &&
+    tickerInput.trim().length >= 1 &&
+    effectiveSearchResults.length > 0;
 
   return (
     <aside className="flex h-full w-80 shrink-0 flex-col border-r border-slate-800 bg-slate-900/70">
@@ -195,13 +278,18 @@ export function WatchlistSidebar({
       {/* Add Ticker Input */}
       <form
         onSubmit={handleAddTickerSubmit}
-        className="border-b border-slate-800 p-3"
+        className="relative border-b border-slate-800 p-3"
       >
         <div className="flex gap-1.5">
           <input
             type="text"
             value={tickerInput}
-            onChange={(e) => setTickerInput(e.target.value.toUpperCase())}
+            onChange={(e) => handleTickerInputChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                setIsDropdownOpen(false);
+              }
+            }}
             placeholder="Add ticker (e.g. NVDA, NFLX)..."
             className="flex-1 rounded-lg border border-slate-800 bg-slate-950 px-2.5 py-1.5 font-mono text-xs text-slate-100 placeholder:font-sans placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
           />
@@ -213,6 +301,53 @@ export function WatchlistSidebar({
             <span>Add</span>
           </button>
         </div>
+
+        {/* Live Ticker Search Autocomplete Dropdown */}
+        {showAutocompleteDropdown && (
+          <div
+            data-testid="ticker-search-dropdown"
+            className="absolute left-3 right-3 top-full z-30 mt-1 max-h-60 overflow-y-auto rounded-lg border border-slate-700 bg-slate-900 shadow-xl"
+          >
+            {effectiveSearchResults.map((item) => {
+              const isAlreadyInWatchlist =
+                activeWatchlist?.tickers.includes(item.ticker) ?? false;
+
+              return (
+                <button
+                  key={item.ticker}
+                  type="button"
+                  data-testid={`ticker-search-option-${item.ticker}`}
+                  onClick={() => void handleSelectSearchResult(item)}
+                  className="flex w-full items-center justify-between gap-2 border-b border-slate-800/70 px-2.5 py-2 text-left transition last:border-b-0 hover:bg-slate-800"
+                >
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="shrink-0 rounded bg-emerald-500/15 px-1.5 py-0.5 font-mono text-xs font-bold text-emerald-400 ring-1 ring-emerald-500/30">
+                      {item.ticker}
+                    </span>
+                    <span className="truncate text-xs text-slate-200">
+                      {item.name}
+                    </span>
+                  </div>
+
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {item.exchange && (
+                      <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
+                        {item.exchange}
+                      </span>
+                    )}
+                    {isAlreadyInWatchlist && (
+                      <span className="flex items-center gap-0.5 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400">
+                        <Check className="h-3 w-3" />
+                        <span>In list</span>
+                      </span>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {errorMsg && (
           <p className="mt-1.5 text-[11px] text-rose-400">{errorMsg}</p>
         )}

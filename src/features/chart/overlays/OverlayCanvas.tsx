@@ -10,6 +10,7 @@ import { overlayPluginRegistry } from './registry';
 import './plugins/StickerPlugin';
 import './plugins/TrendlinePlugin';
 import './plugins/TradeMarkerPlugin';
+import './plugins/FibonacciPlugin';
 
 export interface OverlayCanvasProps {
   hostContext: ChartOverlayHostContext;
@@ -128,6 +129,16 @@ export function OverlayCanvas({
           {draftAnchors.length === 0
             ? 'Click chart to place first point of trendline · Click Pointer to cancel'
             : 'Click chart to place second point and finish trendline'}
+        </div>
+      );
+    }
+
+    if (activeTool === 'fibonacci') {
+      return (
+        <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-purple-500/40 bg-purple-950/85 px-4 py-1.5 text-xs font-medium text-purple-200 shadow-xl backdrop-blur-md">
+          {draftAnchors.length === 0
+            ? 'Click chart to place first anchor of Fibonacci retracement · Click Pointer to cancel'
+            : 'Click chart to place second anchor and finish Fibonacci retracement'}
         </div>
       );
     }

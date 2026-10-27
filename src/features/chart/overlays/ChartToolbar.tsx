@@ -1,4 +1,4 @@
-import { MousePointer, BookmarkCheck, StickyNote, TrendingUp } from 'lucide-react';
+import { MousePointer, BookmarkCheck, StickyNote, TrendingUp, Percent } from 'lucide-react';
 import type { ChartAnnotationType } from '../../../core/schemas/annotation';
 
 export interface ChartToolbarProps {
@@ -54,6 +54,20 @@ export function ChartToolbar({
       >
         <TrendingUp className="h-3.5 w-3.5" />
         <span>Trendline</span>
+      </button>
+
+      <button
+        type="button"
+        title="Fibonacci Retracement (Click twice to calculate Fibonacci retracement levels)"
+        onClick={() => onSelectTool(activeTool === 'fibonacci' ? null : 'fibonacci')}
+        className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition ${
+          activeTool === 'fibonacci'
+            ? 'bg-purple-500 text-slate-950 shadow-sm font-semibold'
+            : 'text-slate-400 hover:text-purple-300'
+        }`}
+      >
+        <Percent className="h-3.5 w-3.5" />
+        <span>Fib</span>
       </button>
 
       <button
