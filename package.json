@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "start": "node scripts/prod-server.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "demo:mobile": "vite-node src/mobile/mobileRunner.ts",

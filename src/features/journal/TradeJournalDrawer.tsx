@@ -1,12 +1,14 @@
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import {
   CheckCircle2,
   Clock,
   DollarSign,
+  Download,
   Percent,
   PlusCircle,
   Trash2,
   TrendingUp,
+  Upload,
   X,
 } from 'lucide-react';
 import {
@@ -16,6 +18,7 @@ import {
   type TradeEntry,
   type TradeSide,
 } from '../../core/schemas/trade';
+import { exportTradesToCsv } from '../../core/serialization/workspaceExport';
 import { JournalAnalyticsCard } from './JournalAnalyticsCard';
 
 
@@ -42,6 +45,9 @@ export interface TradeJournalDrawerProps {
   onClosePosition: (id: string, exitPrice: number) => Promise<void>;
   onDeleteTrade: (id: string) => Promise<void>;
   onSelectTicker: (ticker: string) => void;
+  onExportCsv?: (csvContent: string) => void;
+  onExportWorkspaceJson?: () => void;
+  onImportWorkspaceJson?: (jsonString: string) => Promise<void> | void;
 }
 
 const SETUP_TAG_PRESETS = ['Breakout', 'Retest', 'Dip Buy', 'Momentum', 'Reversal'];
@@ -59,6 +65,9 @@ export function TradeJournalDrawer({
   onClosePosition,
   onDeleteTrade,
   onSelectTicker,
+  onExportCsv,
+  onExportWorkspaceJson,
+  onImportWorkspaceJson,
 }: TradeJournalDrawerProps) {
   const [side, setSide] = useState<TradeSide>('BUY');
   const [ticker, setTicker] = useState(activeTicker);
@@ -72,6 +81,7 @@ export function TradeJournalDrawer({
 
   const [closingTradeId, setClosingTradeId] = useState<string | null>(null);
   const [exitPriceInput, setExitPriceInput] = useState('');
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   if (!isOpen) {
     return null;
@@ -112,6 +122,40 @@ export function TradeJournalDrawer({
     if (filterStatus === 'ALL') return true;
     return t.status === filterStatus;
   });
+
+  const handleExportCsvClick = () => {
+    const csv = exportTradesToCsv(filteredTrades);
+    onExportCsv?.(csv);
+
+    if (
+      typeof document !== 'undefined' &&
+      typeof Blob !== 'undefined' &&
+      typeof URL !== 'undefined' &&
+      typeof URL.createObjectURL === 'function'
+    ) {
+      try {
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = 'marketview-trades.csv';
+        anchor.click();
+        URL.revokeObjectURL(url);
+      } catch {
+        // Ignore browser download errors in non-browser/test environments
+      }
+    }
+  };
+
+  const handleRestoreFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !onImportWorkspaceJson) {
+      return;
+    }
+    const text = await file.text();
+    await onImportWorkspaceJson(text);
+    e.target.value = '';
+  };
 
   const isNetPositive = summary.totalRealizedPnL >= 0;
 
@@ -361,7 +405,7 @@ export function TradeJournalDrawer({
         {/* Trade Log History Table */}
         <div className="flex flex-1 flex-col overflow-hidden">
           {/* Filter Bar */}
-          <div className="flex items-center justify-between border-b border-slate-800 px-4 py-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 px-4 py-2.5">
             <div className="flex items-center gap-1.5">
               {(['ALL', 'OPEN', 'CLOSED'] as const).map((status) => (
                 <button
@@ -378,9 +422,50 @@ export function TradeJournalDrawer({
                 </button>
               ))}
             </div>
-            <span className="text-xs text-slate-400">
-              {filteredTrades.length} records
-            </span>
+
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400">
+                {filteredTrades.length} records
+              </span>
+
+              <button
+                type="button"
+                data-testid="export-trades-csv-btn"
+                onClick={handleExportCsvClick}
+                className="flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/80 px-2.5 py-1 text-[11px] font-semibold text-slate-200 transition hover:border-emerald-500/40 hover:text-emerald-300"
+              >
+                <Download className="h-3 w-3" />
+                <span>Export CSV</span>
+              </button>
+
+              <button
+                type="button"
+                data-testid="export-workspace-json-btn"
+                onClick={() => onExportWorkspaceJson?.()}
+                className="flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/80 px-2.5 py-1 text-[11px] font-semibold text-slate-200 transition hover:border-sky-500/40 hover:text-sky-300"
+              >
+                <Download className="h-3 w-3" />
+                <span>Backup JSON</span>
+              </button>
+
+              <button
+                type="button"
+                data-testid="import-workspace-json-btn"
+                onClick={() => fileInputRef.current?.click()}
+                className="flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/80 px-2.5 py-1 text-[11px] font-semibold text-slate-200 transition hover:border-amber-500/40 hover:text-amber-300"
+              >
+                <Upload className="h-3 w-3" />
+                <span>Restore JSON</span>
+              </button>
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".json,application/json"
+                onChange={handleRestoreFileChange}
+                className="hidden"
+              />
+            </div>
           </div>
 
           {/* Table Container */}

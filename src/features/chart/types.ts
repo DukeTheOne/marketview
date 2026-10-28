@@ -12,6 +12,7 @@ export interface ScreenPoint {
 export interface CoordinateProjector {
   logicalToScreen(anchor: LogicalAnchor): ScreenPoint | null;
   screenToLogical(point: ScreenPoint): LogicalAnchor | null;
+  priceToCoordinate?(price: number): number | null;
 }
 
 export interface ChartOverlayHostContext {

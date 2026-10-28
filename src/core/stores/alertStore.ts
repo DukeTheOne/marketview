@@ -1,4 +1,5 @@
 import { createStore, type StoreApi } from 'zustand/vanilla';
+import type { StorageRepository } from '../repositories/StorageRepository';
 import {
   PriceAlertSchema,
   shouldTriggerAlert,
@@ -10,7 +11,9 @@ import { TickerSymbolSchema, type TickerQuote } from '../schemas/market';
 export interface AlertStoreState {
   alerts: PriceAlert[];
   lastTriggeredAlertIds: string[];
+  isHydrated: boolean;
 
+  hydrate: () => Promise<PriceAlert[]>;
   addAlert: (input: {
     ticker: string;
     targetPrice: number;
@@ -27,10 +30,35 @@ export interface AlertStoreState {
 
 export type AlertStore = StoreApi<AlertStoreState>;
 
+function isStorageRepository(
+  candidate: PriceAlert[] | StorageRepository | undefined
+): candidate is StorageRepository {
+  return (
+    typeof candidate === 'object' &&
+    candidate !== null &&
+    !Array.isArray(candidate) &&
+    typeof candidate.getAlerts === 'function' &&
+    typeof candidate.saveAlerts === 'function'
+  );
+}
+
 /**
- * Headless Zustand store factory for price alert lifecycle and quote evaluation.
+ * Headless Zustand store factory for price alert lifecycle, quote evaluation,
+ * and optional asynchronous persistence via StorageRepository.
  */
-export function createAlertStore(initialAlerts: PriceAlert[] = []): AlertStore {
+export function createAlertStore(
+  initialAlertsOrRepo?: PriceAlert[] | StorageRepository,
+  maybeRepo?: StorageRepository
+): AlertStore {
+  const initialAlerts: PriceAlert[] = Array.isArray(initialAlertsOrRepo)
+    ? initialAlertsOrRepo
+    : [];
+  const repository: StorageRepository | undefined = isStorageRepository(
+    initialAlertsOrRepo
+  )
+    ? initialAlertsOrRepo
+    : maybeRepo;
+
   const validatedInitial = initialAlerts.map((alert) =>
     PriceAlertSchema.parse(alert)
   );
@@ -38,6 +66,24 @@ export function createAlertStore(initialAlerts: PriceAlert[] = []): AlertStore {
   return createStore<AlertStoreState>((set, get) => ({
     alerts: validatedInitial,
     lastTriggeredAlertIds: [],
+    isHydrated: false,
+
+    hydrate: async () => {
+      if (!repository) {
+        set({ isHydrated: true });
+        return get().alerts;
+      }
+
+      const persistedRaw = await repository.getAlerts();
+      const persisted = persistedRaw.map((alert) =>
+        PriceAlertSchema.parse(alert)
+      );
+      set({
+        alerts: persisted,
+        isHydrated: true,
+      });
+      return persisted;
+    },
 
     addAlert: (input) => {
       const nowSec = Math.max(1, Math.floor(Date.now() / 1000));
@@ -58,6 +104,10 @@ export function createAlertStore(initialAlerts: PriceAlert[] = []): AlertStore {
         alerts: [newAlert, ...state.alerts],
       }));
 
+      if (repository) {
+        void repository.saveAlerts(get().alerts);
+      }
+
       return newAlert;
     },
 
@@ -68,6 +118,10 @@ export function createAlertStore(initialAlerts: PriceAlert[] = []): AlertStore {
           (triggeredId) => triggeredId !== id
         ),
       }));
+
+      if (repository) {
+        void repository.saveAlerts(get().alerts);
+      }
     },
 
     dismissAlert: (id) => {
@@ -84,6 +138,10 @@ export function createAlertStore(initialAlerts: PriceAlert[] = []): AlertStore {
           (triggeredId) => triggeredId !== id
         ),
       }));
+
+      if (repository) {
+        void repository.saveAlerts(get().alerts);
+      }
     },
 
     rearmAlert: (id) => {
@@ -101,6 +159,10 @@ export function createAlertStore(initialAlerts: PriceAlert[] = []): AlertStore {
           (triggeredId) => triggeredId !== id
         ),
       }));
+
+      if (repository) {
+        void repository.saveAlerts(get().alerts);
+      }
     },
 
     clearTriggeredBanner: () => {
@@ -130,6 +192,10 @@ export function createAlertStore(initialAlerts: PriceAlert[] = []): AlertStore {
           alerts: nextAlerts,
           lastTriggeredAlertIds: [...state.lastTriggeredAlertIds, ...newIds],
         }));
+
+        if (repository) {
+          void repository.saveAlerts(get().alerts);
+        }
       }
 
       return newlyTriggered;

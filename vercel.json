@@ -1,0 +1,12 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/yahoo/(.*)",
+      "destination": "/api/yahoo.mjs?path=$1"
+    },
+    {
+      "source": "/((?!api/|assets/|icon\\.svg|manifest\\.webmanifest).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

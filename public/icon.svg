@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <rect width="512" height="512" rx="112" fill="#020617" />
+  <rect x="24" y="24" width="464" height="464" rx="92" stroke="#1e293b" stroke-width="8" />
+  <!-- Subtle grid lines -->
+  <line x1="64" y1="160" x2="448" y2="160" stroke="#0f172a" stroke-width="6" stroke-linecap="round" />
+  <line x1="64" y1="256" x2="448" y2="256" stroke="#0f172a" stroke-width="6" stroke-linecap="round" />
+  <line x1="64" y1="352" x2="448" y2="352" stroke="#0f172a" stroke-width="6" stroke-linecap="round" />
+  <!-- Candle 1 (Bullish Emerald) -->
+  <line x1="136" y1="220" x2="136" y2="396" stroke="#10b981" stroke-width="14" stroke-linecap="round" />
+  <rect x="108" y="264" width="56" height="92" rx="10" fill="#10b981" />
+  <!-- Candle 2 (Slate Pullback) -->
+  <line x1="256" y1="176" x2="256" y2="348" stroke="#64748b" stroke-width="14" stroke-linecap="round" />
+  <rect x="228" y="216" width="56" height="84" rx="10" fill="#475569" />
+  <!-- Candle 3 (Bullish Breakout Emerald) -->
+  <line x1="376" y1="104" x2="376" y2="304" stroke="#10b981" stroke-width="14" stroke-linecap="round" />
+  <rect x="348" y="140" width="56" height="120" rx="10" fill="#10b981" />
+</svg>

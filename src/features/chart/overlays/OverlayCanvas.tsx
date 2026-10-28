@@ -1,10 +1,12 @@
-import { useEffect, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import type { PriceAlert } from '../../../core/schemas/alert';
 import type {
   ChartAnnotation,
   ChartAnnotationType,
   LogicalAnchor,
 } from '../../../core/schemas/annotation';
 import type { ChartOverlayHostContext, ScreenPoint } from '../types';
+import { PriceAlertLinesLayer } from './PriceAlertLinesLayer';
 import { overlayPluginRegistry } from './registry';
 // Ensure default plugins are registered
 import './plugins/StickerPlugin';
@@ -33,6 +35,29 @@ export interface OverlayCanvasProps {
     }
   ) => Promise<void>;
   onDeleteAnnotation: (id: string) => Promise<void>;
+  alerts?: PriceAlert[];
+  referenceTimestamp?: number;
+  onDismissAlert?: (id: string) => void;
+  onDeleteAlert?: (id: string) => void;
+}
+
+/**
+ * Pure helper to immutably replace a single anchor at `anchorIndex`
+ * with `nextAnchor` logical coordinates ({ timestamp, price }).
+ */
+export function applyDraggedAnchorUpdate(
+  anchors: LogicalAnchor[],
+  anchorIndex: number,
+  nextAnchor: LogicalAnchor
+): LogicalAnchor[] {
+  if (anchorIndex < 0 || anchorIndex >= anchors.length) {
+    return [...anchors];
+  }
+  return anchors.map((anchor, idx) =>
+    idx === anchorIndex
+      ? { timestamp: nextAnchor.timestamp, price: nextAnchor.price }
+      : anchor
+  );
 }
 
 export function OverlayCanvas({
@@ -45,22 +70,133 @@ export function OverlayCanvas({
   onAddAnnotation,
   onUpdateAnnotation,
   onDeleteAnnotation,
+  alerts,
+  referenceTimestamp,
+  onDismissAlert,
+  onDeleteAlert,
 }: OverlayCanvasProps) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const [mousePoint, setMousePoint] = useState<ScreenPoint | null>(null);
   const [draftAnchors, setDraftAnchors] = useState<LogicalAnchor[]>([]);
+  const [draggingAnchor, setDraggingAnchor] = useState<{
+    annotationId: string;
+    anchorIndex: number;
+  } | null>(null);
+  const [draggedAnchorPreview, setDraggedAnchorPreview] = useState<{
+    annotationId: string;
+    anchorIndex: number;
+    anchor: LogicalAnchor;
+  } | null>(null);
 
-  // Clear draft anchors whenever active tool changes or resets
-  useEffect(() => {
-    setDraftAnchors([]);
-    setMousePoint(null);
-  }, [activeTool]);
+  const draggedAnchorPreviewRef = useRef(draggedAnchorPreview);
+  draggedAnchorPreviewRef.current = draggedAnchorPreview;
 
-  const activePlugin = activeTool ? overlayPluginRegistry.get(activeTool) : null;
   const tickerAnnotations = annotations.filter(
     (a) => a.ticker === hostContext.ticker
   );
+  const tickerAnnotationsRef = useRef(tickerAnnotations);
+  tickerAnnotationsRef.current = tickerAnnotations;
+
+  const onUpdateAnnotationRef = useRef(onUpdateAnnotation);
+  onUpdateAnnotationRef.current = onUpdateAnnotation;
+
+  // Clear draft anchors and dragging state whenever active tool changes or resets
+  useEffect(() => {
+    setDraftAnchors([]);
+    setMousePoint(null);
+    setDraggingAnchor(null);
+    setDraggedAnchorPreview(null);
+    draggedAnchorPreviewRef.current = null;
+  }, [activeTool]);
+
+  const activePlugin = activeTool ? overlayPluginRegistry.get(activeTool) : null;
+  const selectedAnnotation = selectedAnnotationId
+    ? tickerAnnotations.find((a) => a.id === selectedAnnotationId) ?? null
+    : null;
+
+  const commitDrag = () => {
+    const preview = draggedAnchorPreviewRef.current;
+    if (preview) {
+      const targetAnnotation = tickerAnnotationsRef.current.find(
+        (a) => a.id === preview.annotationId
+      );
+      if (targetAnnotation) {
+        const updatedAnchors = applyDraggedAnchorUpdate(
+          targetAnnotation.anchors,
+          preview.anchorIndex,
+          preview.anchor
+        );
+        void onUpdateAnnotationRef.current(preview.annotationId, {
+          anchors: updatedAnchors,
+        });
+      }
+    }
+    draggedAnchorPreviewRef.current = null;
+    setDraggedAnchorPreview(null);
+    setDraggingAnchor(null);
+  };
+
+  // Safe window event binding during dragging to prevent sticky drag leaks outside canvas
+  useEffect(() => {
+    if (!draggingAnchor || typeof window === 'undefined') {
+      return;
+    }
+
+    const handleWindowMouseMove = (e: MouseEvent) => {
+      const container = rootRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      const currentPoint: ScreenPoint = {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top,
+      };
+      const nextLogical = hostContext.projector.screenToLogical(currentPoint);
+      if (!nextLogical) {
+        return;
+      }
+      const preview = {
+        annotationId: draggingAnchor.annotationId,
+        anchorIndex: draggingAnchor.anchorIndex,
+        anchor: nextLogical,
+      };
+      draggedAnchorPreviewRef.current = preview;
+      setDraggedAnchorPreview(preview);
+    };
+
+    const handleWindowMouseUp = () => {
+      commitDrag();
+    };
+
+    window.addEventListener('mousemove', handleWindowMouseMove);
+    window.addEventListener('mouseup', handleWindowMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleWindowMouseMove);
+      window.removeEventListener('mouseup', handleWindowMouseUp);
+    };
+  }, [draggingAnchor, hostContext.projector]);
 
   const handleMouseMove = (e: ReactMouseEvent<HTMLDivElement>) => {
+    if (draggingAnchor) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const currentPoint: ScreenPoint = {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top,
+      };
+      const nextLogical = hostContext.projector.screenToLogical(currentPoint);
+      if (!nextLogical) {
+        return;
+      }
+      const preview = {
+        annotationId: draggingAnchor.annotationId,
+        anchorIndex: draggingAnchor.anchorIndex,
+        anchor: nextLogical,
+      };
+      draggedAnchorPreviewRef.current = preview;
+      setDraggedAnchorPreview(preview);
+      return;
+    }
+
     if (!activeTool) {
       if (mousePoint !== null) setMousePoint(null);
       return;
@@ -72,7 +208,18 @@ export function OverlayCanvas({
     });
   };
 
+  const handleMouseUp = () => {
+    if (draggingAnchor) {
+      commitDrag();
+    }
+  };
+
   const handleCanvasClick = async (e: ReactMouseEvent<HTMLDivElement>) => {
+    if (draggingAnchor) {
+      commitDrag();
+      return;
+    }
+
     if (!activeTool || !activePlugin) {
       onSelectAnnotation(null);
       return;
@@ -148,34 +295,104 @@ export function OverlayCanvas({
 
   return (
     <div
+      ref={rootRef}
       className={`overlay-canvas-root absolute inset-0 z-15 ${
-        activeTool ? 'pointer-events-auto cursor-crosshair' : 'pointer-events-none'
+        activeTool || draggingAnchor
+          ? 'pointer-events-auto cursor-crosshair'
+          : 'pointer-events-none'
       }`}
       onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
       onClick={handleCanvasClick}
     >
       {/* Active tool placement indicator banner */}
       {renderStatusBanner()}
+
+      {/* Target price alert horizontal lines */}
+      {alerts && alerts.length > 0 && (
+        <PriceAlertLinesLayer
+          ticker={hostContext.ticker}
+          alerts={alerts}
+          projector={hostContext.projector}
+          referenceTimestamp={referenceTimestamp}
+          onDismissAlert={onDismissAlert}
+          onDeleteAlert={onDeleteAlert}
+        />
+      )}
 
       {/* Render existing annotations via their registered plugins */}
       {tickerAnnotations.map((annotation) => {
         const plugin = overlayPluginRegistry.get(annotation.type);
         if (!plugin) return null;
 
+        const effectiveAnnotation =
+          draggedAnchorPreview &&
+          draggedAnchorPreview.annotationId === annotation.id
+            ? {
+                ...annotation,
+                anchors: applyDraggedAnchorUpdate(
+                  annotation.anchors,
+                  draggedAnchorPreview.anchorIndex,
+                  draggedAnchorPreview.anchor
+                ),
+              }
+            : annotation;
+
         return plugin.renderAnnotation({
-          annotation,
-          payload: annotation.payload,
-          isSelected: annotation.id === selectedAnnotationId,
+          annotation: effectiveAnnotation,
+          payload: effectiveAnnotation.payload,
+          isSelected: effectiveAnnotation.id === selectedAnnotationId,
           projector: hostContext.projector,
-          onSelect: () => onSelectAnnotation(annotation.id),
+          onSelect: () => onSelectAnnotation(effectiveAnnotation.id),
           onUpdate: (updates) => {
-            void onUpdateAnnotation(annotation.id, updates);
+            void onUpdateAnnotation(effectiveAnnotation.id, updates);
           },
           onDelete: () => {
-            void onDeleteAnnotation(annotation.id);
+            void onDeleteAnnotation(effectiveAnnotation.id);
           },
         });
       })}
+
+      {/* Interactive drag-to-edit anchor handles for selected annotation */}
+      {selectedAnnotation &&
+        !activeTool &&
+        (draggedAnchorPreview &&
+        draggedAnchorPreview.annotationId === selectedAnnotation.id
+          ? applyDraggedAnchorUpdate(
+              selectedAnnotation.anchors,
+              draggedAnchorPreview.anchorIndex,
+              draggedAnchorPreview.anchor
+            )
+          : selectedAnnotation.anchors
+        ).map((anchor, idx) => {
+          const screenPoint = hostContext.projector.logicalToScreen(anchor);
+          if (!screenPoint) return null;
+
+          return (
+            <button
+              key={`anchor-handle-${selectedAnnotation.id}-${idx}`}
+              type="button"
+              data-testid={`anchor-handle-${selectedAnnotation.id}-${idx}`}
+              aria-label={`Drag anchor ${idx + 1} of ${selectedAnnotation.type}`}
+              title={`Drag anchor #${idx + 1} ($${anchor.price.toFixed(2)})`}
+              style={{
+                left: `${screenPoint.x}px`,
+                top: `${screenPoint.y}px`,
+              }}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                setDraggingAnchor({
+                  annotationId: selectedAnnotation.id,
+                  anchorIndex: idx,
+                });
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+              }}
+              className="pointer-events-auto absolute z-30 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 cursor-grab rounded-full border-2 border-white bg-sky-500 shadow-md ring-2 ring-sky-500/40 transition-transform hover:scale-125 active:cursor-grabbing"
+            />
+          );
+        })}
 
       {/* Draft placement preview (e.g. rubber-band line for trendline) */}
       {activePlugin?.renderDraftPreview?.({

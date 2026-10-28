@@ -119,6 +119,17 @@ function yahooFinanceApiPlugin(): Plugin {
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), yahooFinanceApiPlugin()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-charts': ['lightweight-charts'],
+          'vendor-react': ['react', 'react-dom'],
+          'vendor-icons': ['lucide-react'],
+        },
+      },
+    },
+  },
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts'],

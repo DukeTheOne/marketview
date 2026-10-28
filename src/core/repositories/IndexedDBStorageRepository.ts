@@ -1,7 +1,12 @@
+import { PriceAlertSchema, type PriceAlert } from '../schemas/alert';
 import {
   ChartAnnotationSchema,
   type ChartAnnotation,
 } from '../schemas/annotation';
+import {
+  UserPreferencesSchema,
+  type UserPreferences,
+} from '../schemas/preferences';
 import { TradeEntrySchema, type TradeEntry } from '../schemas/trade';
 import { WatchlistSchema, type Watchlist } from '../schemas/watchlist';
 import { InMemoryStorageRepository } from './InMemoryStorageRepository';
@@ -13,6 +18,8 @@ const STORE_NAME = 'kv_store';
 const WATCHLISTS_KEY = 'watchlists';
 const ANNOTATIONS_KEY = 'annotations';
 const TRADES_KEY = 'trades';
+const ALERTS_KEY = 'alerts';
+const PREFERENCES_KEY = 'preferences';
 
 /**
  * Browser IndexedDB adapter implementing StorageRepository with automatic
@@ -76,6 +83,40 @@ export class IndexedDBStorageRepository implements StorageRepository {
     const validated = trades.map((t) => TradeEntrySchema.parse(t));
     await this.fallback.saveTrades(validated);
     await this.writeKey(TRADES_KEY, validated);
+  }
+
+  public async getAlerts(ticker?: string): Promise<PriceAlert[]> {
+    const raw = await this.readKey<unknown[]>(ALERTS_KEY);
+    const list =
+      raw && Array.isArray(raw)
+        ? raw.map((item) => PriceAlertSchema.parse(item))
+        : await this.fallback.getAlerts();
+
+    if (!ticker) {
+      return list;
+    }
+    const normalized = ticker.trim().toUpperCase();
+    return list.filter((a) => a.ticker === normalized);
+  }
+
+  public async saveAlerts(alerts: PriceAlert[]): Promise<void> {
+    const validated = alerts.map((a) => PriceAlertSchema.parse(a));
+    await this.fallback.saveAlerts(validated);
+    await this.writeKey(ALERTS_KEY, validated);
+  }
+
+  public async getPreferences(): Promise<UserPreferences | null> {
+    const raw = await this.readKey<unknown>(PREFERENCES_KEY);
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      return this.fallback.getPreferences();
+    }
+    return UserPreferencesSchema.parse(raw);
+  }
+
+  public async savePreferences(preferences: UserPreferences): Promise<void> {
+    const validated = UserPreferencesSchema.parse(preferences);
+    await this.fallback.savePreferences(validated);
+    await this.writeKey(PREFERENCES_KEY, validated);
   }
 
   private getDatabase(): Promise<IDBDatabase | null> {

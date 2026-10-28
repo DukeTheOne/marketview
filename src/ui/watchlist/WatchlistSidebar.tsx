@@ -25,6 +25,7 @@ export interface WatchlistSidebarProps {
   onSelectTicker: (ticker: string) => void;
   searchResults?: TickerSearchResult[];
   onSearchTickers?: (query: string) => Promise<TickerSearchResult[]>;
+  isCollapsed?: boolean;
 }
 
 export function WatchlistSidebar({
@@ -41,6 +42,7 @@ export function WatchlistSidebar({
   onSelectTicker,
   searchResults,
   onSearchTickers,
+  isCollapsed = false,
 }: WatchlistSidebarProps) {
   const [tickerInput, setTickerInput] = useState('');
   const [internalSearchResults, setInternalSearchResults] = useState<
@@ -173,6 +175,10 @@ export function WatchlistSidebar({
     tickerInput.trim().length >= 1 &&
     effectiveSearchResults.length > 0;
 
+  if (isCollapsed) {
+    return null;
+  }
+
   return (
     <aside className="flex h-full w-80 shrink-0 flex-col border-r border-slate-800 bg-slate-900/70">
       {/* Watchlist Selector Header */}
@@ -283,6 +289,7 @@ export function WatchlistSidebar({
         <div className="flex gap-1.5">
           <input
             type="text"
+            data-shortcut-search="true"
             value={tickerInput}
             onChange={(e) => handleTickerInputChange(e.target.value)}
             onKeyDown={(e) => {

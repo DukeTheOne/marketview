@@ -3,6 +3,7 @@ export * from './schemas/watchlist';
 export * from './schemas/annotation';
 export * from './schemas/trade';
 export * from './schemas/alert';
+export * from './schemas/preferences';
 
 export * from './providers/MarketDataProvider';
 export * from './providers/CachedMarketDataProvider';
@@ -20,5 +21,10 @@ export * from './stores/watchlistStore';
 export * from './stores/annotationStore';
 export * from './stores/tradeJournalStore';
 export * from './stores/alertStore';
+export * from './stores/preferencesStore';
+
+export * from './indicators/technicalIndicators';
+export * from './serialization/workspaceExport';
+
 
 

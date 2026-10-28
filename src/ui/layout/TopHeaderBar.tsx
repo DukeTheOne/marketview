@@ -6,6 +6,8 @@ import {
   BookOpen,
   ChevronDown,
   Database,
+  PanelLeftClose,
+  PanelLeftOpen,
   RefreshCw,
   X,
 } from 'lucide-react';
@@ -17,6 +19,7 @@ import {
   type LivePollIntervalSec,
   type ProviderMode,
 } from '../providers/ProviderSettingsPopover';
+import { KeyboardShortcutsPopover } from '../shortcuts/KeyboardShortcutsPopover';
 
 const TIMEFRAMES: Timeframe[] = ['15m', '1h', '1D', '1W'];
 
@@ -53,6 +56,15 @@ export interface TopHeaderBarProps {
   marketError?: string | null;
   onSelectProviderMode?: (mode: ProviderMode, finnhubKey?: string) => void;
   onChangePollInterval?: (seconds: LivePollIntervalSec) => void;
+
+  // Mooers' Law UX: Collapsible Watchlist Sidebar
+  isSidebarCollapsed?: boolean;
+  onToggleSidebar?: () => void;
+
+  // Popover initial states (optional, for testing or pre-opened states)
+  initialAlertsOpen?: boolean;
+  initialProviderSettingsOpen?: boolean;
+  initialShortcutsOpen?: boolean;
 }
 
 export function TopHeaderBar({
@@ -79,10 +91,21 @@ export function TopHeaderBar({
   marketError = null,
   onSelectProviderMode,
   onChangePollInterval,
+  isSidebarCollapsed = false,
+  onToggleSidebar,
+  initialAlertsOpen = false,
+  initialProviderSettingsOpen = false,
+  initialShortcutsOpen = false,
 }: TopHeaderBarProps) {
-  const [isAlertsOpen, setIsAlertsOpen] = useState(false);
-  const [isProviderSettingsOpen, setIsProviderSettingsOpen] = useState(false);
+  const [isAlertsOpen, setIsAlertsOpen] = useState(initialAlertsOpen);
+  const [isProviderSettingsOpen, setIsProviderSettingsOpen] = useState(
+    initialProviderSettingsOpen
+  );
+  const [isShortcutsOpen, setIsShortcutsOpen] = useState(initialShortcutsOpen);
   const isPositive = (quote?.change ?? 0) >= 0;
+
+  const isAnyPopoverOpen =
+    isAlertsOpen || isProviderSettingsOpen || isShortcutsOpen;
 
   const activeAlertCount = alerts.filter((a) => a.status === 'ACTIVE').length;
   const hasTriggered = lastTriggeredAlertIds.length > 0;
@@ -93,8 +116,39 @@ export function TopHeaderBar({
 
   return (
     <>
+      {isAnyPopoverOpen && (
+        <div
+          data-testid="popover-backdrop"
+          className="fixed inset-0 z-40 bg-transparent"
+          onClick={() => {
+            setIsAlertsOpen(false);
+            setIsProviderSettingsOpen(false);
+            setIsShortcutsOpen(false);
+          }}
+        />
+      )}
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-slate-800 bg-slate-900/90 px-4">
         <div className="flex items-center gap-5">
+          {onToggleSidebar && (
+            <button
+              type="button"
+              data-testid="toggle-sidebar-btn"
+              onClick={onToggleSidebar}
+              title="Toggle Watchlist Sidebar (b)"
+              className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${
+                isSidebarCollapsed
+                  ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-400'
+                  : 'border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700 hover:text-white'
+              }`}
+            >
+              {isSidebarCollapsed ? (
+                <PanelLeftOpen className="h-4 w-4" />
+              ) : (
+                <PanelLeftClose className="h-4 w-4" />
+              )}
+            </button>
+          )}
+
           <div className="flex items-center gap-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/30">
               <Activity className="h-4 w-4" />
@@ -189,13 +243,14 @@ export function TopHeaderBar({
           </button>
 
           {/* Price Alerts Toggle Button & Popover */}
-          <div className="relative">
+          <div className="relative z-50">
             <button
               type="button"
               data-testid="alerts-toggle-btn"
               onClick={() => {
                 setIsAlertsOpen((prev) => !prev);
                 setIsProviderSettingsOpen(false);
+                setIsShortcutsOpen(false);
               }}
               className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
                 isAlertsOpen
@@ -269,13 +324,14 @@ export function TopHeaderBar({
           </button>
 
           {/* Clickable Provider Badge & Settings Popover */}
-          <div className="relative">
+          <div className="relative z-50">
             <button
               type="button"
               data-testid="provider-settings-btn"
               onClick={() => {
                 setIsProviderSettingsOpen((prev) => !prev);
                 setIsAlertsOpen(false);
+                setIsShortcutsOpen(false);
               }}
               title="Configure Market Data Source & Live Polling"
               className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition ${
@@ -315,6 +371,32 @@ export function TopHeaderBar({
               className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin text-emerald-400' : ''}`}
             />
           </button>
+
+          {/* Keyboard Shortcuts Help Button & Popover */}
+          <div className="relative z-50">
+            <button
+              type="button"
+              data-testid="shortcuts-help-btn"
+              onClick={() => {
+                setIsShortcutsOpen((prev) => !prev);
+                setIsAlertsOpen(false);
+                setIsProviderSettingsOpen(false);
+              }}
+              title="Keyboard Shortcuts (?)"
+              className={`flex h-8 w-8 items-center justify-center rounded-lg border font-mono text-xs font-bold transition ${
+                isShortcutsOpen
+                  ? 'border-emerald-500 bg-emerald-500/15 text-emerald-300'
+                  : 'border-slate-800 bg-slate-950 text-slate-300 hover:border-slate-700 hover:text-white'
+              }`}
+            >
+              ?
+            </button>
+
+            <KeyboardShortcutsPopover
+              isOpen={isShortcutsOpen}
+              onClose={() => setIsShortcutsOpen(false)}
+            />
+          </div>
         </div>
       </header>
 

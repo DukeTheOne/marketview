@@ -44,6 +44,7 @@ export function createMarketStore(
   initialTimeframe: Timeframe = '1D'
 ): MarketStore {
   let provider = initialProvider;
+  let activeCandleRequestId = 0;
   const normalizedInitialTicker = TickerSymbolSchema.parse(initialTicker);
   const validatedTimeframe = TimeframeSchema.parse(initialTimeframe);
 
@@ -60,6 +61,7 @@ export function createMarketStore(
 
     setProvider: async (newProvider: MarketDataProvider) => {
       provider = newProvider;
+      activeCandleRequestId++;
       set({
         providerId: provider.id,
         candlesByKey: {},
@@ -76,6 +78,7 @@ export function createMarketStore(
 
     setActiveTicker: async (rawTicker: string) => {
       const ticker = TickerSymbolSchema.parse(rawTicker);
+      activeCandleRequestId++;
       set({ activeTicker: ticker, error: null });
       await Promise.all([
         get().refreshActiveCandles(),
@@ -85,6 +88,7 @@ export function createMarketStore(
 
     setActiveTimeframe: async (rawTimeframe: Timeframe) => {
       const timeframe = TimeframeSchema.parse(rawTimeframe);
+      activeCandleRequestId++;
       set({ activeTimeframe: timeframe, error: null });
       await get().refreshActiveCandles();
     },
@@ -94,12 +98,19 @@ export function createMarketStore(
       const seriesKey = getCandleSeriesKey(activeTicker, activeTimeframe);
       set({ isLoadingCandles: true, error: null });
 
+      const reqId = ++activeCandleRequestId;
+
       try {
         const candles = await provider.getCandles({
           ticker: activeTicker,
           timeframe: activeTimeframe,
           limit: 120,
         });
+
+        if (reqId !== activeCandleRequestId) {
+          return [];
+        }
+
         set((state) => ({
           candlesByKey: {
             ...state.candlesByKey,
@@ -109,6 +120,9 @@ export function createMarketStore(
         }));
         return candles;
       } catch (err) {
+        if (reqId !== activeCandleRequestId) {
+          return [];
+        }
         const message =
           err instanceof Error ? err.message : 'Failed to load candles';
         set({ isLoadingCandles: false, error: message });
