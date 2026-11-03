@@ -20,7 +20,9 @@ export const UserPreferencesSchema = z.object({
   providerMode: ProviderModeSchema.default('yahoo'),
   finnhubApiKey: z.string().default(''),
   pollIntervalSec: LivePollIntervalSchema.default(15),
-  activeIndicators: z.array(IndicatorIdSchema).default(['SMA_20', 'VOLUME']),
+  activeIndicators: z
+    .array(IndicatorIdSchema)
+    .default(['CANDLES', 'VOLUME', 'PRICE_15M']),
   isSidebarCollapsed: z.boolean().default(false),
 });
 

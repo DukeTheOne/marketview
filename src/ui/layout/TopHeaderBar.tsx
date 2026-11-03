@@ -12,7 +12,11 @@ import {
   X,
 } from 'lucide-react';
 import type { AlertCondition, PriceAlert } from '../../core/schemas/alert';
-import type { TickerQuote, Timeframe } from '../../core/schemas/market';
+import {
+  PRIMARY_TIMEFRAMES,
+  type TickerQuote,
+  type Timeframe,
+} from '../../core/schemas/market';
 import { PriceAlertsPopover } from '../alerts/PriceAlertsPopover';
 import {
   ProviderSettingsPopover,
@@ -21,7 +25,7 @@ import {
 } from '../providers/ProviderSettingsPopover';
 import { KeyboardShortcutsPopover } from '../shortcuts/KeyboardShortcutsPopover';
 
-const TIMEFRAMES: Timeframe[] = ['15m', '1h', '1D', '1W'];
+const TIMEFRAMES: readonly Timeframe[] = PRIMARY_TIMEFRAMES;
 
 export interface TopHeaderBarProps {
   activeTicker: string;
@@ -29,11 +33,16 @@ export interface TopHeaderBarProps {
   quote: TickerQuote | undefined;
   providerId: string;
   isLoading: boolean;
-  isJournalOpen: boolean;
-  tradeCount: number;
+  isJournalOpen?: boolean;
+  tradeCount?: number;
   onSelectTimeframe: (timeframe: Timeframe) => void;
   onRefresh: () => void;
-  onToggleJournal: () => void;
+  onToggleJournal?: () => void;
+
+  // Minimalist feature visibility toggles
+  showJournal?: boolean;
+  showAlerts?: boolean;
+  showLivePollToggle?: boolean;
 
   // Milestone 3: Price Alerts props
   alerts?: PriceAlert[];
@@ -73,11 +82,14 @@ export function TopHeaderBar({
   quote,
   providerId,
   isLoading,
-  isJournalOpen,
-  tradeCount,
+  isJournalOpen = false,
+  tradeCount = 0,
   onSelectTimeframe,
   onRefresh,
   onToggleJournal,
+  showJournal = true,
+  showAlerts = true,
+  showLivePollToggle = true,
   alerts = [],
   lastTriggeredAlertIds = [],
   onCreateAlert,
@@ -105,10 +117,10 @@ export function TopHeaderBar({
   const isPositive = (quote?.change ?? 0) >= 0;
 
   const isAnyPopoverOpen =
-    isAlertsOpen || isProviderSettingsOpen || isShortcutsOpen;
+    (showAlerts && isAlertsOpen) || isProviderSettingsOpen || isShortcutsOpen;
 
   const activeAlertCount = alerts.filter((a) => a.status === 'ACTIVE').length;
-  const hasTriggered = lastTriggeredAlertIds.length > 0;
+  const hasTriggered = showAlerts && lastTriggeredAlertIds.length > 0;
   const triggeredAlerts = alerts.filter((a) =>
     lastTriggeredAlertIds.includes(a.id)
   );
@@ -153,19 +165,9 @@ export function TopHeaderBar({
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/30">
               <Activity className="h-4 w-4" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-bold tracking-tight text-slate-100">
-                  MarketView
-                </span>
-                <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-emerald-400 ring-1 ring-emerald-500/20">
-                  LIVE M1-M6
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-400">
-                Logical (timestamp, price) Architecture
-              </p>
-            </div>
+            <span className="text-sm font-bold tracking-tight text-slate-100">
+              MarketView
+            </span>
           </div>
 
           <div className="h-6 w-px bg-slate-800" />
@@ -201,7 +203,7 @@ export function TopHeaderBar({
           </div>
         </div>
 
-        {/* Timeframe Switcher, Journal Drawer Toggle, Alerts, Auto-Poll & Provider Switcher */}
+        {/* Timeframe Switcher, Data Source Switcher, Manual Refresh & Shortcuts */}
         <div className="flex items-center gap-3">
           <div className="flex items-center rounded-lg border border-slate-800 bg-slate-950 p-0.5">
             {TIMEFRAMES.map((tf) => {
@@ -223,105 +225,111 @@ export function TopHeaderBar({
             })}
           </div>
 
-          {/* Trade Journal Drawer Toggle Button */}
-          <button
-            type="button"
-            onClick={onToggleJournal}
-            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
-              isJournalOpen
-                ? 'border-emerald-500 bg-emerald-500/15 text-emerald-300'
-                : 'border-slate-800 bg-slate-950 text-slate-300 hover:border-slate-700 hover:text-white'
-            }`}
-          >
-            <BookOpen className="h-3.5 w-3.5 text-emerald-400" />
-            <span>Journal</span>
-            {tradeCount > 0 && (
-              <span className="rounded-full bg-emerald-500/20 px-1.5 py-0.2 font-mono text-[10px] text-emerald-300">
-                {tradeCount}
-              </span>
-            )}
-          </button>
-
-          {/* Price Alerts Toggle Button & Popover */}
-          <div className="relative z-50">
+          {/* Trade Journal Drawer Toggle Button (Hidden in minimalist mode) */}
+          {showJournal && (
             <button
               type="button"
-              data-testid="alerts-toggle-btn"
-              onClick={() => {
-                setIsAlertsOpen((prev) => !prev);
-                setIsProviderSettingsOpen(false);
-                setIsShortcutsOpen(false);
-              }}
+              onClick={onToggleJournal}
               className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
-                isAlertsOpen
-                  ? 'border-amber-500 bg-amber-500/15 text-amber-300'
-                  : hasTriggered
-                  ? 'border-amber-500/60 bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/40'
+                isJournalOpen
+                  ? 'border-emerald-500 bg-emerald-500/15 text-emerald-300'
                   : 'border-slate-800 bg-slate-950 text-slate-300 hover:border-slate-700 hover:text-white'
               }`}
             >
-              {hasTriggered ? (
-                <BellRing className="h-3.5 w-3.5 text-amber-400 animate-pulse" />
-              ) : (
-                <Bell className="h-3.5 w-3.5 text-amber-400" />
-              )}
-              <span>Alerts</span>
-              {activeAlertCount > 0 && (
-                <span className="rounded-full bg-slate-800 px-1.5 py-0.2 font-mono text-[10px] text-slate-300">
-                  {activeAlertCount}
-                </span>
-              )}
-              {hasTriggered && (
-                <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" />
+              <BookOpen className="h-3.5 w-3.5 text-emerald-400" />
+              <span>Journal</span>
+              {tradeCount > 0 && (
+                <span className="rounded-full bg-emerald-500/20 px-1.5 py-0.2 font-mono text-[10px] text-emerald-300">
+                  {tradeCount}
                 </span>
               )}
             </button>
+          )}
 
-            <PriceAlertsPopover
-              isOpen={isAlertsOpen}
-              activeTicker={activeTicker}
-              currentPrice={quote?.price}
-              alerts={alerts}
-              lastTriggeredAlertIds={lastTriggeredAlertIds}
-              onClose={() => setIsAlertsOpen(false)}
-              onCreateAlert={onCreateAlert ?? (() => {})}
-              onDismissAlert={onDismissAlert ?? (() => {})}
-              onRearmAlert={onRearmAlert ?? (() => {})}
-              onDeleteAlert={onDeleteAlert ?? (() => {})}
-              onClearTriggeredBanner={onClearTriggeredBanner}
-            />
-          </div>
+          {/* Price Alerts Toggle Button & Popover (Hidden in minimalist mode) */}
+          {showAlerts && (
+            <div className="relative z-50">
+              <button
+                type="button"
+                data-testid="alerts-toggle-btn"
+                onClick={() => {
+                  setIsAlertsOpen((prev) => !prev);
+                  setIsProviderSettingsOpen(false);
+                  setIsShortcutsOpen(false);
+                }}
+                className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+                  isAlertsOpen
+                    ? 'border-amber-500 bg-amber-500/15 text-amber-300'
+                    : hasTriggered
+                    ? 'border-amber-500/60 bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/40'
+                    : 'border-slate-800 bg-slate-950 text-slate-300 hover:border-slate-700 hover:text-white'
+                }`}
+              >
+                {hasTriggered ? (
+                  <BellRing className="h-3.5 w-3.5 text-amber-400 animate-pulse" />
+                ) : (
+                  <Bell className="h-3.5 w-3.5 text-amber-400" />
+                )}
+                <span>Alerts</span>
+                {activeAlertCount > 0 && (
+                  <span className="rounded-full bg-slate-800 px-1.5 py-0.2 font-mono text-[10px] text-slate-300">
+                    {activeAlertCount}
+                  </span>
+                )}
+                {hasTriggered && (
+                  <span className="relative flex h-2 w-2">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
+                    <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" />
+                  </span>
+                )}
+              </button>
 
-          {/* Quick Live Auto-Poll Toggle Pill */}
-          <button
-            type="button"
-            data-testid="live-poll-toggle-btn"
-            onClick={() =>
-              onChangePollInterval?.(isLivePolling ? 0 : 15)
-            }
-            title={
-              isLivePolling
-                ? `Auto-polling every ${pollIntervalSec}s (click to pause)`
-                : 'Auto-polling paused (click to enable 15s live stream)'
-            }
-            className={`hidden items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-mono text-[11px] font-semibold transition sm:flex ${
-              isLivePolling
-                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
-                : 'border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700 hover:text-slate-200'
-            }`}
-          >
-            {isLivePolling ? (
-              <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-              </span>
-            ) : (
-              <span className="inline-flex h-2 w-2 rounded-full bg-slate-600" />
-            )}
-            <span>{isLivePolling ? `LIVE ${pollIntervalSec}s` : 'PAUSED'}</span>
-          </button>
+              <PriceAlertsPopover
+                isOpen={isAlertsOpen}
+                activeTicker={activeTicker}
+                currentPrice={quote?.price}
+                alerts={alerts}
+                lastTriggeredAlertIds={lastTriggeredAlertIds}
+                onClose={() => setIsAlertsOpen(false)}
+                onCreateAlert={onCreateAlert ?? (() => {})}
+                onDismissAlert={onDismissAlert ?? (() => {})}
+                onRearmAlert={onRearmAlert ?? (() => {})}
+                onDeleteAlert={onDeleteAlert ?? (() => {})}
+                onClearTriggeredBanner={onClearTriggeredBanner}
+              />
+            </div>
+          )}
+
+          {/* Quick Live Auto-Poll Toggle Pill (Hidden in minimalist mode) */}
+          {showLivePollToggle && (
+            <button
+              type="button"
+              data-testid="live-poll-toggle-btn"
+              onClick={() =>
+                onChangePollInterval?.(isLivePolling ? 0 : 15)
+              }
+              title={
+                isLivePolling
+                  ? `Auto-polling every ${pollIntervalSec}s (click to pause)`
+                  : 'Auto-polling paused (click to enable 15s live stream)'
+              }
+              className={`hidden items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-mono text-[11px] font-semibold transition sm:flex ${
+                isLivePolling
+                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
+                  : 'border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+              }`}
+            >
+              {isLivePolling ? (
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                </span>
+              ) : (
+                <span className="inline-flex h-2 w-2 rounded-full bg-slate-600" />
+              )}
+              <span>{isLivePolling ? `LIVE ${pollIntervalSec}s` : 'PAUSED'}</span>
+            </button>
+          )}
 
           {/* Clickable Provider Badge & Settings Popover */}
           <div className="relative z-50">
@@ -395,6 +403,7 @@ export function TopHeaderBar({
             <KeyboardShortcutsPopover
               isOpen={isShortcutsOpen}
               onClose={() => setIsShortcutsOpen(false)}
+              minimalistMode={!showJournal && !showAlerts}
             />
           </div>
         </div>

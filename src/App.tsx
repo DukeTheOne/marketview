@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useStore } from 'zustand';
 import {
   CachedMarketDataProvider,
@@ -7,22 +7,19 @@ import {
   IndexedDBStorageRepository,
   ResilientMarketDataProvider,
   YahooFinanceProvider,
-  createAlertStore,
   createAnnotationStore,
   createMarketStore,
   createPreferencesStore,
-  createTradeJournalStore,
   createWatchlistStore,
   getCandleSeriesKey,
-  parseWorkspaceBackup,
-  serializeWorkspaceBackup,
   type MarketDataProvider,
   type Timeframe,
 } from './core';
 import { ChartContainer } from './features/chart/ChartContainer';
 import { ChartToolbar } from './features/chart/overlays/ChartToolbar';
 import { OverlayCanvas } from './features/chart/overlays/OverlayCanvas';
-import { TradeJournalDrawer } from './features/journal/TradeJournalDrawer';
+// Minimalist Mode: TradeJournalDrawer is hidden for beginner-friendly long-term tracking
+// import { TradeJournalDrawer } from './features/journal/TradeJournalDrawer';
 import { TopHeaderBar } from './ui/layout/TopHeaderBar';
 import type {
   ProviderMode,
@@ -64,28 +61,26 @@ export function App() {
   const initialMode: ProviderMode =
     initialEnvKey.length > 0 ? 'finnhub' : 'yahoo';
 
+  const [focusRevision, setFocusRevision] = useState(0);
+
   const {
-    storageRepo,
     marketStore,
     watchlistStore,
     annotationStore,
-    tradeJournalStore,
-    alertStore,
     preferencesStore,
   } = useMemo(() => {
     const cachedProvider = createConfiguredProvider(initialMode, initialEnvKey);
     const repo = new IndexedDBStorageRepository();
 
     return {
-      storageRepo: repo,
-      marketStore: createMarketStore(cachedProvider, 'AAPL', '1D'),
+      marketStore: createMarketStore(cachedProvider, 'AAPL', '1D', 365),
       watchlistStore: createWatchlistStore(repo),
       annotationStore: createAnnotationStore(repo),
-      tradeJournalStore: createTradeJournalStore(repo),
-      alertStore: createAlertStore(repo),
       preferencesStore: createPreferencesStore(repo, {
         providerMode: initialMode,
         finnhubApiKey: initialEnvKey,
+        pollIntervalSec: 0,
+        activeIndicators: ['CANDLES', 'VOLUME', 'PRICE_15M'],
       }),
     };
   }, [initialMode, initialEnvKey]);
@@ -94,6 +89,10 @@ export function App() {
   const activeTimeframe = useStore(marketStore, (s) => s.activeTimeframe);
   const quotesByTicker = useStore(marketStore, (s) => s.quotesByTicker);
   const candlesByKey = useStore(marketStore, (s) => s.candlesByKey);
+  const intradayCandlesByTicker = useStore(
+    marketStore,
+    (s) => s.intradayCandlesByTicker
+  );
   const searchResults = useStore(marketStore, (s) => s.searchResults);
   const isLoadingCandles = useStore(marketStore, (s) => s.isLoadingCandles);
   const providerId = useStore(marketStore, (s) => s.providerId);
@@ -109,19 +108,6 @@ export function App() {
     (s) => s.selectedAnnotationId
   );
 
-  const trades = useStore(tradeJournalStore, (s) => s.trades);
-  const isDrawerOpen = useStore(tradeJournalStore, (s) => s.isDrawerOpen);
-  const filterStatus = useStore(tradeJournalStore, (s) => s.filterStatus);
-  const journalSummary = useMemo(
-    () => tradeJournalStore.getState().getSummary(),
-    [trades]
-  );
-
-  const alerts = useStore(alertStore, (s) => s.alerts);
-  const lastTriggeredAlertIds = useStore(
-    alertStore,
-    (s) => s.lastTriggeredAlertIds
-  );
   const savedPreferences = useStore(preferencesStore, (s) => s.preferences);
 
   const activeWatchlist =
@@ -129,11 +115,9 @@ export function App() {
 
   useEffect(() => {
     void (async () => {
-      const [hydratedWatchlists, , , , hydratedPrefs] = await Promise.all([
+      const [hydratedWatchlists, , hydratedPrefs] = await Promise.all([
         watchlistStore.getState().hydrate(),
         annotationStore.getState().hydrate(),
-        tradeJournalStore.getState().hydrate(),
-        alertStore.getState().hydrate(),
         preferencesStore.getState().hydrate(),
       ]);
 
@@ -174,14 +158,12 @@ export function App() {
     marketStore,
     watchlistStore,
     annotationStore,
-    tradeJournalStore,
-    alertStore,
     preferencesStore,
     initialMode,
     initialEnvKey,
   ]);
 
-  // Mooers' Law Keyboard-First Workflow Shortcuts
+  // Minimalist Keyboard-First Workflow Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -195,9 +177,6 @@ export function App() {
       if (e.key === 'Escape') {
         annotationStore.getState().setActiveTool(null);
         annotationStore.getState().selectAnnotation(null);
-        if (tradeJournalStore.getState().isDrawerOpen) {
-          tradeJournalStore.getState().toggleDrawer(false);
-        }
         return;
       }
 
@@ -240,12 +219,6 @@ export function App() {
         return;
       }
 
-      if (keyLower === 'j') {
-        e.preventDefault();
-        tradeJournalStore.getState().toggleDrawer();
-        return;
-      }
-
       if (keyLower === 's') {
         e.preventDefault();
         const current = annotationStore.getState().activeTool;
@@ -264,33 +237,20 @@ export function App() {
         return;
       }
 
-      if (keyLower === 'f') {
-        e.preventDefault();
-        const current = annotationStore.getState().activeTool;
-        annotationStore
-          .getState()
-          .setActiveTool(current === 'fibonacci' ? null : 'fibonacci');
-        return;
-      }
-
-      if (keyLower === 'm') {
-        e.preventDefault();
-        const current = annotationStore.getState().activeTool;
-        annotationStore
-          .getState()
-          .setActiveTool(current === 'trade_marker' ? null : 'trade_marker');
-        return;
-      }
+      // Minimalist Mode: Fibonacci ('f'), Trade Marker ('m'), and Journal ('j') shortcuts are disabled.
 
       const tfMap: Record<string, Timeframe> = {
-        '1': '15m',
-        '2': '1h',
-        '3': '1D',
-        '4': '1W',
+        '1': '1D',
+        '2': '1W',
+        '3': '1M',
+        '4': '3M',
+        '5': '6M',
+        '6': '1Y',
       };
       const mappedTf = tfMap[e.key];
       if (mappedTf) {
         e.preventDefault();
+        setFocusRevision((rev) => rev + 1);
         void marketStore.getState().setActiveTimeframe(mappedTf);
         void preferencesStore
           .getState()
@@ -304,7 +264,6 @@ export function App() {
     };
   }, [
     annotationStore,
-    tradeJournalStore,
     marketStore,
     preferencesStore,
     savedPreferences.isSidebarCollapsed,
@@ -318,43 +277,6 @@ export function App() {
       void marketStore.getState().refreshQuotes(selectedList.tickers);
     }
   }, [activeWatchlistId, watchlistStore, marketStore]);
-
-  // Real-time evaluation of price alerts against latest market quotes
-  useEffect(() => {
-    for (const quote of Object.values(quotesByTicker)) {
-      alertStore.getState().evaluateQuote(quote);
-    }
-  }, [quotesByTicker, alertStore]);
-
-  // Rate-Limit-Safe Live Auto-Polling Loop
-  useEffect(() => {
-    const pollIntervalSec = savedPreferences.pollIntervalSec;
-    if (pollIntervalSec <= 0) {
-      return;
-    }
-
-    let pollCounter = 0;
-    const timer = globalThis.setInterval(() => {
-      pollCounter += 1;
-      // High frequency: stream active chart ticker and candles
-      void marketStore.getState().refreshQuotes([activeTicker]);
-      void marketStore.getState().refreshActiveCandles();
-
-      // Moderate frequency (~30s): refresh background watchlist quotes safely within provider rate limits
-      const bgWatchlistStep = Math.max(1, Math.round(30 / pollIntervalSec));
-      if (
-        pollCounter % bgWatchlistStep === 0 &&
-        activeWatchlist &&
-        activeWatchlist.tickers.length > 0
-      ) {
-        void marketStore.getState().refreshQuotes(activeWatchlist.tickers);
-      }
-    }, pollIntervalSec * 1000);
-
-    return () => {
-      globalThis.clearInterval(timer);
-    };
-  }, [savedPreferences.pollIntervalSec, activeWatchlist, activeTicker, marketStore]);
 
   const handleSelectProviderMode = (
     nextMode: ProviderMode,
@@ -374,8 +296,18 @@ export function App() {
 
   const seriesKey = getCandleSeriesKey(activeTicker, activeTimeframe);
   const activeCandles = candlesByKey[seriesKey] ?? [];
+  const activeIntradayCandles = intradayCandlesByTicker[activeTicker] ?? [];
   const activeQuote = quotesByTicker[activeTicker];
-  const activeTickerAnnotations = annotations.filter(
+
+  // Minimalist Mode: Only show Memo ('sticker') and Drawing ('trendline') annotations
+  const minimalistAnnotations = useMemo(
+    () =>
+      annotations.filter(
+        (a) => a.type === 'sticker' || a.type === 'trendline'
+      ),
+    [annotations]
+  );
+  const activeTickerAnnotations = minimalistAnnotations.filter(
     (a) => a.ticker === activeTicker
   );
 
@@ -391,10 +323,9 @@ export function App() {
         pollIntervalSec={savedPreferences.pollIntervalSec}
         marketError={marketError}
         isLoading={isLoadingCandles}
-        isJournalOpen={isDrawerOpen}
-        tradeCount={trades.length}
-        alerts={alerts}
-        lastTriggeredAlertIds={lastTriggeredAlertIds}
+        showJournal={false}
+        showAlerts={false}
+        showLivePollToggle={false}
         isSidebarCollapsed={savedPreferences.isSidebarCollapsed}
         onToggleSidebar={() => {
           void preferencesStore.getState().updatePreferences({
@@ -407,35 +338,19 @@ export function App() {
             .getState()
             .updatePreferences({ pollIntervalSec: sec });
         }}
-        onCreateAlert={(input) => {
-          alertStore.getState().addAlert(input);
-        }}
-        onDismissAlert={(id) => {
-          alertStore.getState().dismissAlert(id);
-        }}
-        onRearmAlert={(id) => {
-          alertStore.getState().rearmAlert(id);
-        }}
-        onDeleteAlert={(id) => {
-          alertStore.getState().removeAlert(id);
-        }}
-        onClearTriggeredBanner={() => {
-          alertStore.getState().clearTriggeredBanner();
-        }}
         onSelectTimeframe={(tf) => {
+          setFocusRevision((rev) => rev + 1);
           void marketStore.getState().setActiveTimeframe(tf);
           void preferencesStore
             .getState()
             .updatePreferences({ activeTimeframe: tf });
         }}
         onRefresh={() => {
+          setFocusRevision((rev) => rev + 1);
           void marketStore.getState().refreshActiveCandles();
           if (activeWatchlist) {
             void marketStore.getState().refreshQuotes(activeWatchlist.tickers);
           }
-        }}
-        onToggleJournal={() => {
-          tradeJournalStore.getState().toggleDrawer();
         }}
       />
 
@@ -465,6 +380,7 @@ export function App() {
           }}
           onAddTicker={async (watchlistId, ticker) => {
             await watchlistStore.getState().addTicker(watchlistId, ticker);
+            setFocusRevision((rev) => rev + 1);
             await marketStore.getState().setActiveTicker(ticker);
             void preferencesStore
               .getState()
@@ -474,6 +390,7 @@ export function App() {
             await watchlistStore.getState().removeTicker(watchlistId, ticker);
           }}
           onSelectTicker={(ticker) => {
+            setFocusRevision((rev) => rev + 1);
             void marketStore.getState().setActiveTicker(ticker);
             void preferencesStore
               .getState()
@@ -485,20 +402,23 @@ export function App() {
           ticker={activeTicker}
           timeframe={activeTimeframe}
           candles={activeCandles}
+          intradayCandles={activeIntradayCandles}
           isLoading={isLoadingCandles}
           defaultIndicators={savedPreferences.activeIndicators}
+          focusRevision={focusRevision}
           renderOverlayLayer={(hostContext) => (
             <>
               <ChartToolbar
                 activeTool={activeTool}
                 annotationCount={activeTickerAnnotations.length}
+                showAdvancedTools={false}
                 onSelectTool={(tool) => {
                   annotationStore.getState().setActiveTool(tool);
                 }}
               />
               <OverlayCanvas
                 hostContext={hostContext}
-                annotations={annotations}
+                annotations={minimalistAnnotations}
                 activeTool={activeTool}
                 selectedAnnotationId={selectedAnnotationId}
                 onSelectTool={(tool) => {
@@ -506,39 +426,9 @@ export function App() {
                 }}
                 onSelectAnnotation={(id) => {
                   annotationStore.getState().selectAnnotation(id);
-                  const matchingTrade = trades.find(
-                    (t) => t.linkedAnnotationId === id
-                  );
-                  if (matchingTrade) {
-                    tradeJournalStore.getState().selectTrade(matchingTrade.id);
-                    tradeJournalStore.getState().toggleDrawer(true);
-                  }
                 }}
                 onAddAnnotation={async (input) => {
-                  const ann = await annotationStore
-                    .getState()
-                    .addAnnotation(input);
-
-                  // If user placed a trade_marker directly on the chart, log a corresponding trade!
-                  if (input.type === 'trade_marker') {
-                    const payload = input.payload as {
-                      side?: 'BUY' | 'SELL' | 'SHORT' | 'COVER';
-                      price?: number;
-                      quantity?: number;
-                      setupTag?: string;
-                      notes?: string;
-                    };
-                    await tradeJournalStore.getState().logTrade({
-                      ticker: input.ticker,
-                      side: payload.side ?? 'BUY',
-                      entryPrice: payload.price ?? input.anchors[0]?.price ?? 100,
-                      quantity: payload.quantity ?? 100,
-                      entryTimestamp: input.anchors[0]?.timestamp,
-                      setupTags: payload.setupTag ? [payload.setupTag] : [],
-                      notesMarkdown: payload.notes ?? '',
-                      linkedAnnotationId: ann.id,
-                    });
-                  }
+                  await annotationStore.getState().addAnnotation(input);
                 }}
                 onUpdateAnnotation={async (id, updates) => {
                   await annotationStore.getState().updateAnnotation(id, updates);
@@ -546,114 +436,9 @@ export function App() {
                 onDeleteAnnotation={async (id) => {
                   await annotationStore.getState().deleteAnnotation(id);
                 }}
-                alerts={alerts}
-                referenceTimestamp={
-                  activeCandles[activeCandles.length - 1]?.timestamp
-                }
-                onDismissAlert={(id) => {
-                  alertStore.getState().dismissAlert(id);
-                }}
-                onDeleteAlert={(id) => {
-                  alertStore.getState().removeAlert(id);
-                }}
               />
             </>
           )}
-        />
-
-        {/* Sliding Trade Journal Drawer */}
-        <TradeJournalDrawer
-          isOpen={isDrawerOpen}
-          activeTicker={activeTicker}
-          currentTickerPrice={activeQuote?.price ?? 100}
-          trades={trades}
-          summary={journalSummary}
-          filterStatus={filterStatus}
-          onClose={() => tradeJournalStore.getState().toggleDrawer(false)}
-          onFilterChange={(f) => tradeJournalStore.getState().setFilterStatus(f)}
-          onExportWorkspaceJson={() => {
-            const json = serializeWorkspaceBackup({
-              watchlists,
-              annotations,
-              trades,
-              alerts,
-            });
-            if (typeof document !== 'undefined') {
-              const blob = new Blob([json], {
-                type: 'application/json;charset=utf-8;',
-              });
-              const url = URL.createObjectURL(blob);
-              const link = document.createElement('a');
-              link.href = url;
-              link.download = 'marketview-workspace-backup.json';
-              document.body.appendChild(link);
-              link.click();
-              document.body.removeChild(link);
-              URL.revokeObjectURL(url);
-            }
-          }}
-          onImportWorkspaceJson={async (jsonString) => {
-            const backup = parseWorkspaceBackup(jsonString);
-            await Promise.all([
-              storageRepo.saveWatchlists(backup.watchlists),
-              storageRepo.saveAnnotations(backup.annotations),
-              storageRepo.saveTrades(backup.trades),
-              storageRepo.saveAlerts(backup.alerts),
-            ]);
-            await Promise.all([
-              watchlistStore.getState().hydrate(),
-              annotationStore.getState().hydrate(),
-              tradeJournalStore.getState().hydrate(),
-              alertStore.getState().hydrate(),
-            ]);
-          }}
-          onLogTrade={async (tradeInput) => {
-            let linkedAnnotationId: string | undefined;
-
-            if (tradeInput.createChartMarker && activeCandles.length > 0) {
-              const latestCandle = activeCandles[activeCandles.length - 1];
-              if (latestCandle) {
-                const ann = await annotationStore.getState().addAnnotation({
-                  ticker: tradeInput.ticker,
-                  type: 'trade_marker',
-                  anchors: [
-                    {
-                      timestamp: latestCandle.timestamp,
-                      price: tradeInput.entryPrice,
-                    },
-                  ],
-                  payload: {
-                    side: tradeInput.side,
-                    price: tradeInput.entryPrice,
-                    quantity: tradeInput.quantity,
-                    setupTag: tradeInput.setupTags?.[0] ?? 'Execution',
-                    notes: tradeInput.notesMarkdown ?? '',
-                  },
-                });
-                linkedAnnotationId = ann.id;
-              }
-            }
-
-            await tradeJournalStore.getState().logTrade({
-              ...tradeInput,
-              linkedAnnotationId,
-            });
-          }}
-          onClosePosition={async (id, exitPrice) => {
-            await tradeJournalStore.getState().closeTrade(id, exitPrice);
-          }}
-          onDeleteTrade={async (id) => {
-            const trade = trades.find((t) => t.id === id);
-            if (trade?.linkedAnnotationId) {
-              await annotationStore
-                .getState()
-                .deleteAnnotation(trade.linkedAnnotationId);
-            }
-            await tradeJournalStore.getState().deleteTrade(id);
-          }}
-          onSelectTicker={(t) => {
-            void marketStore.getState().setActiveTicker(t);
-          }}
         />
       </main>
     </div>

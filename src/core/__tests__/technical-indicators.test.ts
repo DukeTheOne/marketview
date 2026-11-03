@@ -9,6 +9,7 @@ import {
   calculateSMA,
   calculateVWAP,
   computeChartIndicatorsSummary,
+  formatCompactVolume,
 } from '../indicators/technicalIndicators';
 import type { OHLCVCandle } from '../schemas/market';
 
@@ -33,6 +34,7 @@ function makeCandle(
 describe('Technical Indicators Headless Engine', () => {
   describe('Zod Schemas', () => {
     it('validates IndicatorIdSchema and point schemas', () => {
+      expect(IndicatorIdSchema.parse('PRICE_15M')).toBe('PRICE_15M');
       expect(IndicatorIdSchema.parse('SMA_20')).toBe('SMA_20');
       expect(IndicatorIdSchema.parse('EMA_50')).toBe('EMA_50');
       expect(IndicatorIdSchema.parse('BB_20')).toBe('BB_20');
@@ -249,7 +251,7 @@ describe('Technical Indicators Headless Engine', () => {
     });
   });
 
-  describe('computeChartIndicatorsSummary', () => {
+  describe('computeChartIndicatorsSummary & formatCompactVolume', () => {
     it('returns all nulls for empty candle array', () => {
       expect(computeChartIndicatorsSummary([])).toEqual({
         sma20: null,
@@ -257,7 +259,19 @@ describe('Technical Indicators Headless Engine', () => {
         vwap: null,
         rsi14: null,
         bb20: null,
+        latestVolume: null,
+        latestPrice: null,
       });
+    });
+
+    it('formats volume numbers into compact K/M/B strings', () => {
+      expect(formatCompactVolume(null)).toBeNull();
+      expect(formatCompactVolume(undefined)).toBeNull();
+      expect(formatCompactVolume(-5)).toBeNull();
+      expect(formatCompactVolume(450)).toBe('450');
+      expect(formatCompactVolume(45_600)).toBe('45.6K');
+      expect(formatCompactVolume(48_250_000)).toBe('48.25M');
+      expect(formatCompactVolume(2_500_000_000)).toBe('2.50B');
     });
 
     it('returns partial nulls when bar count is between 20 and 49, and full summary at 60+ bars', () => {
@@ -270,6 +284,8 @@ describe('Technical Indicators Headless Engine', () => {
       expect(partial.vwap).not.toBeNull();
       expect(partial.rsi14).not.toBeNull();
       expect(partial.bb20).not.toBeNull();
+      expect(partial.latestVolume).toBe(1000);
+      expect(partial.latestPrice).toBe(124);
 
       const candles60 = Array.from({ length: 60 }, (_, i) =>
         makeCandle(i, 100 + i * 0.5)
@@ -282,6 +298,8 @@ describe('Technical Indicators Headless Engine', () => {
       expect(full.bb20).not.toBeNull();
       expect(full.bb20!.upper).toBeGreaterThan(full.bb20!.middle);
       expect(full.bb20!.lower).toBeLessThan(full.bb20!.middle);
+      expect(full.latestVolume).toBe(1000);
+      expect(full.latestPrice).toBe(129.5);
     });
   });
 });

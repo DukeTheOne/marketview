@@ -1,6 +1,7 @@
 import { createStore, type StoreApi } from 'zustand/vanilla';
 import type { MarketDataProvider } from '../providers/MarketDataProvider';
 import {
+  PRIMARY_TIMEFRAMES,
   TickerSymbolSchema,
   TimeframeSchema,
   type OHLCVCandle,
@@ -15,6 +16,7 @@ export interface MarketState {
   activeTimeframe: Timeframe;
   quotesByTicker: Record<string, TickerQuote>;
   candlesByKey: Record<string, OHLCVCandle[]>;
+  intradayCandlesByTicker: Record<string, OHLCVCandle[]>;
   searchResults: TickerSearchResult[];
   isLoadingCandles: boolean;
   isLoadingQuotes: boolean;
@@ -41,7 +43,8 @@ export function getCandleSeriesKey(ticker: string, timeframe: Timeframe): string
 export function createMarketStore(
   initialProvider: MarketDataProvider,
   initialTicker = 'AAPL',
-  initialTimeframe: Timeframe = '1D'
+  initialTimeframe: Timeframe = '1D',
+  candleLimit = 120
 ): MarketStore {
   let provider = initialProvider;
   let activeCandleRequestId = 0;
@@ -54,6 +57,7 @@ export function createMarketStore(
     activeTimeframe: validatedTimeframe,
     quotesByTicker: {},
     candlesByKey: {},
+    intradayCandlesByTicker: {},
     searchResults: [],
     isLoadingCandles: false,
     isLoadingQuotes: false,
@@ -65,6 +69,7 @@ export function createMarketStore(
       set({
         providerId: provider.id,
         candlesByKey: {},
+        intradayCandlesByTicker: {},
         error: null,
       });
       const existingTickers = Object.keys(get().quotesByTicker);
@@ -89,6 +94,33 @@ export function createMarketStore(
     setActiveTimeframe: async (rawTimeframe: Timeframe) => {
       const timeframe = TimeframeSchema.parse(rawTimeframe);
       activeCandleRequestId++;
+      const { activeTicker, candlesByKey } = get();
+      const targetKey = getCandleSeriesKey(activeTicker, timeframe);
+
+      // If switching between Apple Stocks focus scopes (1D, 1W, 1M, 3M, 6M, 1Y)
+      // and the full historical daily series is already in memory for this ticker,
+      // reuse the loaded history immediately so the chart zooms/focuses without refetching.
+      if (PRIMARY_TIMEFRAMES.includes(timeframe)) {
+        const existingHistory =
+          candlesByKey[targetKey] ??
+          PRIMARY_TIMEFRAMES.map(
+            (tf) => candlesByKey[getCandleSeriesKey(activeTicker, tf)]
+          ).find((arr) => arr && arr.length > 0);
+
+        if (existingHistory && existingHistory.length > 0) {
+          set((state) => ({
+            activeTimeframe: timeframe,
+            error: null,
+            isLoadingCandles: false,
+            candlesByKey: {
+              ...state.candlesByKey,
+              [targetKey]: existingHistory,
+            },
+          }));
+          return;
+        }
+      }
+
       set({ activeTimeframe: timeframe, error: null });
       await get().refreshActiveCandles();
     },
@@ -101,20 +133,54 @@ export function createMarketStore(
       const reqId = ++activeCandleRequestId;
 
       try {
-        const candles = await provider.getCandles({
+        const primaryPromise = provider.getCandles({
           ticker: activeTicker,
           timeframe: activeTimeframe,
-          limit: 120,
+          limit: candleLimit,
         });
+
+        const intradayPromise =
+          activeTimeframe === '15m'
+            ? Promise.resolve([] as OHLCVCandle[])
+            : provider
+                .getCandles({
+                  ticker: activeTicker,
+                  timeframe: '15m',
+                  limit: 600,
+                })
+                .catch((err) => {
+                  console.warn(
+                    `[marketStore] Non-blocking intraday fetch warning for ${activeTicker}:`,
+                    err
+                  );
+                  return [] as OHLCVCandle[];
+                });
+
+        const [candles, intradayCandles] = await Promise.all([
+          primaryPromise,
+          intradayPromise,
+        ]);
 
         if (reqId !== activeCandleRequestId) {
           return [];
         }
 
+        const effectiveIntraday =
+          activeTimeframe === '15m' ? candles : intradayCandles;
+
         set((state) => ({
           candlesByKey: {
             ...state.candlesByKey,
             [seriesKey]: candles,
+            ...(effectiveIntraday.length > 0
+              ? { [getCandleSeriesKey(activeTicker, '15m')]: effectiveIntraday }
+              : {}),
+          },
+          intradayCandlesByTicker: {
+            ...state.intradayCandlesByTicker,
+            ...(effectiveIntraday.length > 0
+              ? { [activeTicker]: effectiveIntraday }
+              : {}),
           },
           isLoadingCandles: false,
         }));

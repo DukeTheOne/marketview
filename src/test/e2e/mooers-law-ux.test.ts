@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { KeyboardShortcutsPopover } from '../../ui/shortcuts/KeyboardShortcutsPopover';
 import { TopHeaderBar } from '../../ui/layout/TopHeaderBar';
 import { WatchlistSidebar } from '../../ui/watchlist/WatchlistSidebar';
+import { ChartToolbar } from '../../features/chart/overlays/ChartToolbar';
+import { IndicatorToolbar } from '../../features/chart/IndicatorToolbar';
 import type { TickerQuote } from '../../core/schemas/market';
 import type { Watchlist } from '../../core/schemas/watchlist';
 
@@ -313,6 +315,91 @@ describe("Mooers' Law UX & Keyboard Shortcuts Suite", () => {
       );
 
       expect(html).toBe('');
+    });
+  });
+
+  describe('Minimalist Long-Term Strategy Frontend Mode', () => {
+    it('renders Apple Stocks timeframes (1D, 1W, 1M, 3M, 6M, 1Y) and hides Journal, Alerts, Live Poll, and jargon badges in TopHeaderBar', () => {
+      const html = renderToStaticMarkup(
+        React.createElement(TopHeaderBar, {
+          activeTicker: 'AAPL',
+          activeTimeframe: '3M',
+          quote: SAMPLE_QUOTE,
+          providerId: 'yahoo-finance',
+          isLoading: false,
+          showJournal: false,
+          showAlerts: false,
+          showLivePollToggle: false,
+          onSelectTimeframe: vi.fn(),
+          onRefresh: vi.fn(),
+        })
+      );
+
+      for (const tf of ['1D', '1W', '1M', '3M', '6M', '1Y']) {
+        expect(html).toContain(`>${tf}</button>`);
+      }
+      expect(html).not.toContain('Journal');
+      expect(html).not.toContain('data-testid="alerts-toggle-btn"');
+      expect(html).not.toContain('data-testid="live-poll-toggle-btn"');
+      expect(html).not.toContain('LIVE M1-M6');
+      expect(html).not.toContain('Logical (timestamp, price) Architecture');
+    });
+
+    it('renders only Pointer, Sticker (Memo), and Trendline in ChartToolbar when showAdvancedTools is false', () => {
+      const html = renderToStaticMarkup(
+        React.createElement(ChartToolbar, {
+          activeTool: null,
+          annotationCount: 2,
+          showAdvancedTools: false,
+          onSelectTool: vi.fn(),
+        })
+      );
+
+      expect(html).toContain('Pointer');
+      expect(html).toContain('Sticker');
+      expect(html).toContain('Trendline');
+      expect(html).not.toContain('Fib');
+      expect(html).not.toContain('Trade Marker');
+    });
+
+    it('renders VOL first with compact volume quantity readout in IndicatorToolbar', () => {
+      const html = renderToStaticMarkup(
+        React.createElement(IndicatorToolbar, {
+          activeIndicators: ['VOLUME', 'SMA_20'],
+          onToggleIndicator: vi.fn(),
+          summary: {
+            sma20: 190.5,
+            ema50: 185.2,
+            vwap: 191.0,
+            rsi14: 54.3,
+            bb20: { upper: 198, middle: 190.5, lower: 183 },
+            latestVolume: 48_250_000,
+          },
+        })
+      );
+
+      const volIdx = html.indexOf('indicator-toggle-VOLUME');
+      const smaIdx = html.indexOf('indicator-toggle-SMA_20');
+      expect(volIdx).toBeGreaterThan(-1);
+      expect(volIdx).toBeLessThan(smaIdx);
+      expect(html).toContain('48.25M');
+    });
+
+    it('renders minimalist shortcuts (1-6 timeframes, Sticker, Trendline) without Journal/Fib/TradeMarker in KeyboardShortcutsPopover', () => {
+      const html = renderToStaticMarkup(
+        React.createElement(KeyboardShortcutsPopover, {
+          isOpen: true,
+          onClose: vi.fn(),
+          minimalistMode: true,
+        })
+      );
+
+      expect(html).toContain('Switch timeframe (1D, 1W, 1M, 3M, 6M, 1Y)');
+      expect(html).toContain('Sticker Note (Memo) tool');
+      expect(html).toContain('Trendline drawing tool');
+      expect(html).not.toContain('Fibonacci Retracement tool');
+      expect(html).not.toContain('Trade Execution Marker tool');
+      expect(html).not.toContain('Toggle Trade Journal');
     });
   });
 });

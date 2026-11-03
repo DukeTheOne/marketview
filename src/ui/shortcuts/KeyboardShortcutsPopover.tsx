@@ -3,6 +3,7 @@ import { Keyboard, X } from 'lucide-react';
 export interface KeyboardShortcutsPopoverProps {
   isOpen: boolean;
   onClose: () => void;
+  minimalistMode?: boolean;
 }
 
 interface ShortcutItem {
@@ -14,6 +15,32 @@ interface ShortcutCategory {
   title: string;
   items: ShortcutItem[];
 }
+
+const MINIMALIST_SHORTCUT_CATEGORIES: ShortcutCategory[] = [
+  {
+    title: 'Navigation & Watchlist',
+    items: [
+      { keys: ['/'], description: 'Focus ticker search input' },
+      { keys: ['b'], description: 'Toggle Watchlist sidebar (Zen chart mode)' },
+      {
+        keys: ['1', '2', '3', '4', '5', '6'],
+        description: 'Switch timeframe (1D, 1W, 1M, 3M, 6M, 1Y)',
+      },
+    ],
+  },
+  {
+    title: 'Chart Drawing & Memos',
+    items: [
+      { keys: ['s'], description: 'Sticker Note (Memo) tool' },
+      { keys: ['t'], description: 'Trendline drawing tool' },
+      { keys: ['Del', '⌫'], description: 'Delete selected chart annotation' },
+      {
+        keys: ['Esc'],
+        description: 'Cancel active tool / Deselect',
+      },
+    ],
+  },
+];
 
 const SHORTCUT_CATEGORIES: ShortcutCategory[] = [
   {
@@ -52,10 +79,15 @@ const SHORTCUT_CATEGORIES: ShortcutCategory[] = [
 export function KeyboardShortcutsPopover({
   isOpen,
   onClose,
+  minimalistMode = false,
 }: KeyboardShortcutsPopoverProps) {
   if (!isOpen) {
     return null;
   }
+
+  const categories = minimalistMode
+    ? MINIMALIST_SHORTCUT_CATEGORIES
+    : SHORTCUT_CATEGORIES;
 
   return (
     <div
@@ -83,7 +115,7 @@ export function KeyboardShortcutsPopover({
 
       {/* Categories */}
       <div className="space-y-3">
-        {SHORTCUT_CATEGORIES.map((category) => (
+        {categories.map((category) => (
           <div key={category.title}>
             <h4 className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-400/90">
               {category.title}

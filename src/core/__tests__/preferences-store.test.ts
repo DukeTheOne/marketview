@@ -20,7 +20,7 @@ describe('UserPreferencesSchema & Repository/Store Persistence', () => {
       providerMode: 'yahoo',
       finnhubApiKey: '',
       pollIntervalSec: 15,
-      activeIndicators: ['SMA_20', 'VOLUME'],
+      activeIndicators: ['CANDLES', 'VOLUME', 'PRICE_15M'],
       isSidebarCollapsed: false,
     });
     expect(DEFAULT_USER_PREFERENCES).toEqual(parsed);

@@ -38,7 +38,11 @@ const TIMEFRAME_SECONDS: Record<Timeframe, number> = {
   '15m': 15 * 60,
   '1h': 60 * 60,
   '1D': 24 * 60 * 60,
-  '1W': 7 * 24 * 60 * 60,
+  '1W': 24 * 60 * 60,
+  '1M': 24 * 60 * 60,
+  '3M': 24 * 60 * 60,
+  '6M': 24 * 60 * 60,
+  '1Y': 24 * 60 * 60,
 };
 
 function hashSeed(input: string): number {
@@ -102,13 +106,107 @@ export class DeterministicDemoProvider implements MarketDataProvider {
     });
   }
 
-  public async getCandles(options: CandleQueryOptions): Promise<OHLCVCandle[]> {
+  public async getCandles(
+    optionsOrTicker: CandleQueryOptions | string,
+    timeframeArg?: Timeframe,
+    limitArg?: number
+  ): Promise<OHLCVCandle[]> {
+    const options: CandleQueryOptions =
+      typeof optionsOrTicker === 'string'
+        ? {
+            ticker: optionsOrTicker,
+            timeframe: timeframeArg ?? '1D',
+            limit: limitArg,
+          }
+        : optionsOrTicker;
+
     const ticker = TickerSymbolSchema.parse(options.ticker);
     const count = Math.max(2, options.limit ?? 120);
+
+    // If 15-minute timeframe is requested, sub-step the daily candles
+    // so intraday price movements coherently match the daily candlestick OHLC.
+    if (options.timeframe === '15m') {
+      const neededDays = Math.max(2, Math.ceil(count / 16));
+      const dailyCandles = await this.getCandles({
+        ticker,
+        timeframe: '1D',
+        limit: neededDays,
+      });
+
+      const allIntraday: OHLCVCandle[] = [];
+      for (const d of dailyCandles) {
+        const dayStart = Math.floor(d.timestamp / 86400) * 86400;
+        const baseTs =
+          d.timestamp - 15 * 900 >= dayStart
+            ? d.timestamp - 15 * 900
+            : dayStart + 34200;
+
+        let seed = hashSeed(`${ticker}:${d.timestamp}:15m`);
+        const P: number[] = new Array(17).fill(0);
+        P[0] = d.open;
+        P[16] = d.close;
+
+        const isBullish = d.close >= d.open;
+        const lowIdx = isBullish ? 4 : 12;
+        const highIdx = isBullish ? 12 : 4;
+        P[lowIdx] = d.low;
+        P[highIdx] = d.high;
+
+        const keyIndices = [0, Math.min(lowIdx, highIdx), Math.max(lowIdx, highIdx), 16];
+        for (let seg = 0; seg < 3; seg++) {
+          const startIdx = keyIndices[seg]!;
+          const endIdx = keyIndices[seg + 1]!;
+          for (let i = startIdx + 1; i < endIdx; i++) {
+            const t = (i - startIdx) / (endIdx - startIdx);
+            const lerp = P[startIdx]! + t * (P[endIdx]! - P[startIdx]!);
+            let rand: number;
+            [rand, seed] = nextPseudoRandom(seed);
+            const noise = (rand - 0.5) * 0.15 * (d.high - d.low);
+            P[i] = roundPrice(Math.max(d.low, Math.min(d.high, lerp + noise)));
+          }
+        }
+
+        for (let k = 0; k < 16; k++) {
+          const barTimestamp = baseTs + k * 900;
+          const barOpen = roundPrice(P[k]!);
+          const barClose = roundPrice(P[k + 1]!);
+          let barHigh = Math.max(barOpen, barClose);
+          let barLow = Math.min(barOpen, barClose);
+
+          if (k === highIdx || k + 1 === highIdx) {
+            barHigh = d.high;
+          }
+          if (k === lowIdx || k + 1 === lowIdx) {
+            barLow = d.low;
+          }
+
+          barHigh = Math.min(d.high, Math.max(barHigh, barOpen, barClose));
+          barLow = Math.max(d.low, Math.min(barLow, barOpen, barClose));
+          const barVolume = Math.max(100, Math.round(d.volume / 16));
+
+          allIntraday.push(
+            OHLCVCandleSchema.parse({
+              timestamp: barTimestamp,
+              open: barOpen,
+              high: barHigh,
+              low: barLow,
+              close: barClose,
+              volume: barVolume,
+            })
+          );
+        }
+      }
+
+      return allIntraday.slice(-count);
+    }
+
     const stepSeconds = TIMEFRAME_SECONDS[options.timeframe];
     const catalogEntry = DEMO_CATALOG.find((item) => item.ticker === ticker);
 
-    let seed = hashSeed(`${ticker}:${options.timeframe}`);
+    const isDailyFocusScope = options.timeframe !== '1h';
+    let seed = hashSeed(
+      `${ticker}:${isDailyFocusScope ? '1D' : options.timeframe}`
+    );
     const basePrice =
       catalogEntry?.basePrice ?? 50 + (hashSeed(ticker) % 350);
     const volatility = catalogEntry?.volatility ?? 0.018;

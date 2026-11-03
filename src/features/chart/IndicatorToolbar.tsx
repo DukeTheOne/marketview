@@ -1,6 +1,7 @@
-import type {
-  ChartIndicatorsSummary,
-  IndicatorId,
+import {
+  formatCompactVolume,
+  type ChartIndicatorsSummary,
+  type IndicatorId,
 } from '../../core/indicators/technicalIndicators';
 
 export interface IndicatorToolbarProps {
@@ -18,6 +19,33 @@ interface OverlayToggleConfig {
 }
 
 const OVERLAY_TOGGLES: OverlayToggleConfig[] = [
+  {
+    id: 'CANDLES',
+    label: 'CANDLES',
+    dotClass: 'bg-teal-400',
+    activeClass: 'border-teal-500/50 bg-teal-500/15 text-teal-200',
+    formatValue: (s) =>
+      s.latestPrice !== undefined && s.latestPrice !== null
+        ? s.latestPrice.toFixed(2)
+        : null,
+  },
+  {
+    id: 'VOLUME',
+    label: 'VOL',
+    dotClass: 'bg-emerald-400',
+    activeClass: 'border-emerald-500/50 bg-emerald-500/15 text-emerald-200',
+    formatValue: (s) => formatCompactVolume(s.latestVolume),
+  },
+  {
+    id: 'PRICE_15M',
+    label: '15m PRICE',
+    dotClass: 'bg-blue-500',
+    activeClass: 'border-blue-500/50 bg-blue-500/15 text-blue-200',
+    formatValue: (s) =>
+      s.latestPrice !== undefined && s.latestPrice !== null
+        ? s.latestPrice.toFixed(2)
+        : null,
+  },
   {
     id: 'SMA_20',
     label: 'SMA 20',
@@ -48,13 +76,6 @@ const OVERLAY_TOGGLES: OverlayToggleConfig[] = [
     dotClass: 'bg-purple-400',
     activeClass: 'border-purple-500/50 bg-purple-500/15 text-purple-200',
     formatValue: (s) => (s.vwap !== null ? s.vwap.toFixed(2) : null),
-  },
-  {
-    id: 'VOLUME',
-    label: 'VOL',
-    dotClass: 'bg-emerald-400',
-    activeClass: 'border-emerald-500/50 bg-emerald-500/15 text-emerald-200',
-    formatValue: () => null,
   },
 ];
 

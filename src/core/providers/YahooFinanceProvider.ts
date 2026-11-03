@@ -67,10 +67,14 @@ const YAHOO_TIMEFRAME_MAP: Record<
   Timeframe,
   { interval: string; range: string }
 > = {
-  '15m': { interval: '15m', range: '5d' },
-  '1h': { interval: '60m', range: '1mo' },
-  '1D': { interval: '1d', range: '6mo' },
-  '1W': { interval: '1wk', range: '2y' },
+  '15m': { interval: '15m', range: '1mo' },
+  '1h': { interval: '60m', range: '3mo' },
+  '1D': { interval: '1d', range: '2y' },
+  '1W': { interval: '1d', range: '2y' },
+  '1M': { interval: '1d', range: '2y' },
+  '3M': { interval: '1d', range: '2y' },
+  '6M': { interval: '1d', range: '2y' },
+  '1Y': { interval: '1d', range: '2y' },
 };
 
 function round2(value: number): number {

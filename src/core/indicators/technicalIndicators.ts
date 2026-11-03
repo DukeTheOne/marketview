@@ -1,7 +1,13 @@
 import { z } from 'zod';
-import type { OHLCVCandle } from '../schemas/market';
+import {
+  TIMEFRAME_FOCUS_DAYS,
+  type OHLCVCandle,
+  type Timeframe,
+} from '../schemas/market';
 
 export const IndicatorIdSchema = z.enum([
+  'CANDLES',
+  'PRICE_15M',
   'SMA_20',
   'EMA_50',
   'BB_20',
@@ -25,12 +31,45 @@ export const BollingerPointSchema = z.object({
 });
 export type BollingerPoint = z.infer<typeof BollingerPointSchema>;
 
+export const IntradayPricePointSchema = z.object({
+  /** Unix timestamp (seconds UTC) of the parent daily candle on the chart timeScale */
+  dailyTimestamp: z.number().int().positive(),
+  /** Unix timestamp (seconds UTC) of the 15-minute bar (or synthesized daily sub-step) */
+  timestamp: z.number().int().positive(),
+  /** Normalized horizontal offset within the parent daily bar column in [-0.5, 0.5] */
+  intraDayOffset: z.number().finite().min(-0.5).max(0.5),
+  /** Actual price value at this 15-minute step */
+  price: z.number().finite().nonnegative(),
+});
+export type IntradayPricePoint = z.infer<typeof IntradayPricePointSchema>;
+
 export interface ChartIndicatorsSummary {
   sma20: number | null;
   ema50: number | null;
   vwap: number | null;
   rsi14: number | null;
   bb20: { upper: number; middle: number; lower: number } | null;
+  latestVolume?: number | null;
+  latestPrice?: number | null;
+}
+
+/**
+ * Formats a raw share/contract volume number into a compact human-readable string (e.g. "48.2M", "850K").
+ */
+export function formatCompactVolume(volume: number | null | undefined): string | null {
+  if (volume === null || volume === undefined || !Number.isFinite(volume) || volume < 0) {
+    return null;
+  }
+  if (volume >= 1_000_000_000) {
+    return `${(volume / 1_000_000_000).toFixed(2)}B`;
+  }
+  if (volume >= 1_000_000) {
+    return `${(volume / 1_000_000).toFixed(2)}M`;
+  }
+  if (volume >= 1_000) {
+    return `${(volume / 1_000).toFixed(1)}K`;
+  }
+  return `${Math.round(volume)}`;
 }
 
 function round2(value: number): number {
@@ -368,9 +407,13 @@ export function computeChartIndicatorsSummary(
       vwap: null,
       rsi14: null,
       bb20: null,
+      latestVolume: null,
+      latestPrice: null,
     };
   }
 
+  const sorted = sortAndValidateCandles(candles);
+  const latestCandle = sorted[sorted.length - 1];
   const sma20Points = calculateSMA(candles, 20);
   const ema50Points = calculateEMA(candles, 50);
   const vwapPoints = calculateVWAP(candles);
@@ -395,5 +438,241 @@ export function computeChartIndicatorsSummary(
           lower: lastBb20.lower,
         }
       : null,
+    latestVolume:
+      latestCandle && Number.isFinite(latestCandle.volume)
+        ? latestCandle.volume
+        : null,
+    latestPrice:
+      latestCandle && Number.isFinite(latestCandle.close)
+        ? round2(latestCandle.close)
+        : null,
   };
+}
+
+/**
+ * Synthesizes sub-bar intraday price coordinates across the chart's daily bars.
+ * For dates with actual 15-minute intraday candles, maps them across [-0.42, +0.42] offset.
+ * For historical dates outside the 15-minute window, synthesizes a 4-point OHLC path
+ * so the price line remains unbroken and continuous across the entire chart history.
+ */
+export function buildIntradayPricePoints(
+  dailyCandles: OHLCVCandle[],
+  intradayCandles: OHLCVCandle[] = []
+): IntradayPricePoint[] {
+  if (!Array.isArray(dailyCandles) || dailyCandles.length === 0) {
+    return [];
+  }
+
+  const sortedDaily = sortAndValidateCandles(dailyCandles);
+  if (sortedDaily.length === 0) {
+    return [];
+  }
+
+  const sortedIntraday = sortAndValidateCandles(intradayCandles);
+  const intradayByDayBucket = new Map<number, OHLCVCandle[]>();
+
+  for (const candle of sortedIntraday) {
+    const bucket = Math.floor(candle.timestamp / 86400);
+    const existing = intradayByDayBucket.get(bucket);
+    if (existing) {
+      existing.push(candle);
+    } else {
+      intradayByDayBucket.set(bucket, [candle]);
+    }
+  }
+
+  const points: IntradayPricePoint[] = [];
+
+  for (const d of sortedDaily) {
+    const dayBucket = Math.floor(d.timestamp / 86400);
+    const dayIntraday = intradayByDayBucket.get(dayBucket);
+
+    if (dayIntraday && dayIntraday.length >= 2) {
+      const K = dayIntraday.length;
+      for (let k = 0; k < K; k++) {
+        const intra = dayIntraday[k]!;
+        const rawOffset = ((k / (K - 1)) - 0.5) * 0.84;
+        const intraDayOffset = Math.round(rawOffset * 10000) / 10000;
+        points.push(
+          IntradayPricePointSchema.parse({
+            dailyTimestamp: d.timestamp,
+            timestamp: intra.timestamp,
+            intraDayOffset,
+            price: round2(intra.close),
+          })
+        );
+      }
+    } else if (dayIntraday && dayIntraday.length === 1) {
+      const intra = dayIntraday[0]!;
+      points.push(
+        IntradayPricePointSchema.parse({
+          dailyTimestamp: d.timestamp,
+          timestamp: intra.timestamp,
+          intraDayOffset: 0,
+          price: round2(intra.close),
+        })
+      );
+    } else {
+      // Fallback 4-point intra-day OHLC path across [-0.42, -0.14, +0.14, +0.42]
+      const offsets = [-0.42, -0.14, 0.14, 0.42];
+      const prices =
+        d.close >= d.open
+          ? [d.open, d.low, d.high, d.close]
+          : [d.open, d.high, d.low, d.close];
+
+      for (let idx = 0; idx < 4; idx++) {
+        points.push(
+          IntradayPricePointSchema.parse({
+            dailyTimestamp: d.timestamp,
+            timestamp: d.timestamp,
+            intraDayOffset: offsets[idx]!,
+            price: round2(prices[idx]!),
+          })
+        );
+      }
+    }
+  }
+
+  return points;
+}
+
+/**
+ * Thresholds defining a "< 3 months" viewport span.
+ * 3M is 90 calendar days (~63 trading days). Using 75 calendar days / 58 logical bars
+ * cleanly separates 1D/1W/1M (<= 30 calendar days, <= 30 bars) and zoomed-in viewports
+ * from 3M/6M/1Y (>= 88 calendar days, >= 60 bars) even when 90d boundaries fall on weekends.
+ */
+export const INTRADAY_LOD_MAX_CALENDAR_DAYS = 75;
+export const INTRADAY_LOD_MAX_LOGICAL_BARS = 58;
+
+/**
+ * Pure helper that evaluates whether the current chart viewport spans < 3 months
+ * and should auto-enable the 15-minute intraday price line.
+ */
+export function computeAutoIntradayLod(
+  sortedCandles: ReadonlyArray<{ timestamp: number }>,
+  visibleLogicalRange: { from: number; to: number } | null | undefined,
+  fallbackTimeframe: Timeframe
+): boolean {
+  if (
+    !visibleLogicalRange ||
+    sortedCandles.length < 2 ||
+    !Number.isFinite(visibleLogicalRange.from) ||
+    !Number.isFinite(visibleLogicalRange.to)
+  ) {
+    return TIMEFRAME_FOCUS_DAYS[fallbackTimeframe] < 90;
+  }
+
+  const logicalSpan = visibleLogicalRange.to - visibleLogicalRange.from;
+  const startIndex = Math.max(
+    0,
+    Math.min(sortedCandles.length - 1, Math.floor(visibleLogicalRange.from))
+  );
+  const endIndex = Math.max(
+    startIndex,
+    Math.min(sortedCandles.length - 1, Math.ceil(visibleLogicalRange.to))
+  );
+  const startTs = sortedCandles[startIndex]?.timestamp ?? 0;
+  const endTs = sortedCandles[endIndex]?.timestamp ?? startTs;
+  const calendarDays = (endTs - startTs) / 86400;
+
+  return (
+    calendarDays < INTRADAY_LOD_MAX_CALENDAR_DAYS &&
+    logicalSpan <= INTRADAY_LOD_MAX_LOGICAL_BARS
+  );
+}
+
+/**
+ * Thresholds defining a ">= 1 month" viewport span where daily OHLC candlesticks
+ * ("mean bars") should automatically be displayed.
+ * Below 1 month (e.g. 1D = 5d, 1W = 10d, or zoomed in < 25 calendar days / <= 18 bars),
+ * daily candlesticks are auto-hidden so the 15-minute price line is unobstructed.
+ */
+export const CANDLES_LOD_MIN_CALENDAR_DAYS = 25;
+export const CANDLES_LOD_MIN_LOGICAL_BARS = 19;
+
+/**
+ * Pure helper that evaluates whether the current chart viewport spans >= 1 month
+ * and should auto-enable the daily OHLC candlestick bars ('CANDLES').
+ *
+ * - For timeframe presets when no live `visibleLogicalRange` is provided:
+ *   '15m', '1h', '1D', '1W' -> false (< 1M)
+ *   '1M', '3M', '6M', '1Y'  -> true  (>= 1M)
+ * - When a live `visibleLogicalRange` ({ from, to }) is available:
+ *   returns `true` iff `calendarDays >= CANDLES_LOD_MIN_CALENDAR_DAYS || logicalSpan >= CANDLES_LOD_MIN_LOGICAL_BARS`.
+ */
+export function computeAutoCandlesLod(
+  sortedCandles: ReadonlyArray<{ timestamp: number }>,
+  visibleLogicalRange: { from: number; to: number } | null | undefined,
+  fallbackTimeframe: Timeframe
+): boolean {
+  if (
+    !visibleLogicalRange ||
+    sortedCandles.length < 2 ||
+    !Number.isFinite(visibleLogicalRange.from) ||
+    !Number.isFinite(visibleLogicalRange.to)
+  ) {
+    return TIMEFRAME_FOCUS_DAYS[fallbackTimeframe] >= 30;
+  }
+
+  const logicalSpan = visibleLogicalRange.to - visibleLogicalRange.from;
+  const startIndex = Math.max(
+    0,
+    Math.min(sortedCandles.length - 1, Math.floor(visibleLogicalRange.from))
+  );
+  const endIndex = Math.max(
+    startIndex,
+    Math.min(sortedCandles.length - 1, Math.ceil(visibleLogicalRange.to))
+  );
+  const startTs = sortedCandles[startIndex]?.timestamp ?? 0;
+  const endTs = sortedCandles[endIndex]?.timestamp ?? startTs;
+  const calendarDays = (endTs - startTs) / 86400;
+
+  return (
+    calendarDays >= CANDLES_LOD_MIN_CALENDAR_DAYS ||
+    logicalSpan >= CANDLES_LOD_MIN_LOGICAL_BARS
+  );
+}
+
+export interface ProjectedHoverPoint {
+  x: number;
+  y: number;
+  price: number;
+  timestamp: number;
+  source: 'price_15m' | 'daily_bar';
+}
+
+/**
+ * Finds the projected hover point closest horizontally to `cursorX`.
+ * Returns `null` if `points` is empty, `cursorX` is not finite, or the closest point
+ * exceeds `maxSnapDistancePx`.
+ */
+export function findNearestHoverPoint(
+  cursorX: number,
+  points: ReadonlyArray<ProjectedHoverPoint>,
+  maxSnapDistancePx = 120
+): ProjectedHoverPoint | null {
+  if (!Number.isFinite(cursorX) || points.length === 0) {
+    return null;
+  }
+
+  let bestPoint: ProjectedHoverPoint | null = null;
+  let minDistance = Infinity;
+
+  for (const pt of points) {
+    if (!Number.isFinite(pt.x) || !Number.isFinite(pt.y)) {
+      continue;
+    }
+    const dist = Math.abs(pt.x - cursorX);
+    if (dist < minDistance) {
+      minDistance = dist;
+      bestPoint = pt;
+    }
+  }
+
+  if (bestPoint !== null && minDistance <= maxSnapDistancePx) {
+    return bestPoint;
+  }
+
+  return null;
 }

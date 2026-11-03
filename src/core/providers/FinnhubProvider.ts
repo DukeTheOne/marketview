@@ -55,14 +55,22 @@ const FINNHUB_RESOLUTION_MAP: Record<Timeframe, string> = {
   '15m': '15',
   '1h': '60',
   '1D': 'D',
-  '1W': 'W',
+  '1W': 'D',
+  '1M': 'D',
+  '3M': 'D',
+  '6M': 'D',
+  '1Y': 'D',
 };
 
 const TIMEFRAME_SECONDS: Record<Timeframe, number> = {
   '15m': 15 * 60,
   '1h': 60 * 60,
   '1D': 24 * 60 * 60,
-  '1W': 7 * 24 * 60 * 60,
+  '1W': 24 * 60 * 60,
+  '1M': 24 * 60 * 60,
+  '3M': 24 * 60 * 60,
+  '6M': 24 * 60 * 60,
+  '1Y': 24 * 60 * 60,
 };
 
 /**

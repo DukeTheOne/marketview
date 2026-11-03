@@ -4,9 +4,45 @@ import type { HttpFetcher } from '../providers/FinnhubProvider';
 import type { MarketDataProvider } from '../providers/MarketDataProvider';
 import { ResilientMarketDataProvider } from '../providers/ResilientMarketDataProvider';
 import { YahooFinanceProvider } from '../providers/YahooFinanceProvider';
+import {
+  PRIMARY_TIMEFRAMES,
+  computeTimeframeFocusWindow,
+} from '../schemas/market';
 import { createMarketStore, getCandleSeriesKey } from '../stores/marketStore';
 
 describe('YahooFinanceProvider', () => {
+  it('supports Apple Stocks PRIMARY_TIMEFRAMES (1D, 1W, 1M, 3M, 6M, 1Y) with shared full history and viewport focus windows', async () => {
+    expect(PRIMARY_TIMEFRAMES).toEqual(['1D', '1W', '1M', '3M', '6M', '1Y']);
+    const demoProvider = new DeterministicDemoProvider();
+    const baseline = await demoProvider.getCandles({
+      ticker: 'AAPL',
+      timeframe: '1D',
+      limit: 365,
+    });
+    expect(baseline).toHaveLength(365);
+
+    for (const tf of PRIMARY_TIMEFRAMES) {
+      const candles = await demoProvider.getCandles({
+        ticker: 'AAPL',
+        timeframe: tf,
+        limit: 365,
+      });
+      // Underlying history is identical across all focus scopes so panning/zooming shows full history
+      expect(candles).toEqual(baseline);
+
+      const focus = computeTimeframeFocusWindow(candles, tf);
+      expect(focus).not.toBeNull();
+      expect(focus!.to).toBe(baseline[baseline.length - 1]!.timestamp);
+      expect(focus!.from).toBeGreaterThanOrEqual(baseline[0]!.timestamp);
+      expect(focus!.from).toBeLessThan(focus!.to);
+    }
+
+    // Verify 1M focuses on the last 30 days while keeping earlier bars in the array
+    const focus1M = computeTimeframeFocusWindow(baseline, '1M')!;
+    const latestTs = baseline[baseline.length - 1]!.timestamp;
+    expect(focus1M.from).toBe(latestTs - 30 * 24 * 60 * 60);
+    expect(baseline[0]!.timestamp).toBeLessThan(focus1M.from);
+  });
   it('parses getQuote from Yahoo Finance v8 chart endpoint', async () => {
     const requestedUrls: string[] = [];
     const mockFetcher: HttpFetcher = async (url) => {
@@ -113,7 +149,7 @@ describe('YahooFinanceProvider', () => {
     });
 
     expect(requestedUrls[0]).toBe(
-      '/api/yahoo/v8/finance/chart/NVDA?interval=15m&range=5d'
+      '/api/yahoo/v8/finance/chart/NVDA?interval=15m&range=1mo'
     );
     expect(candles).toHaveLength(2);
     expect(candles[0]).toEqual({

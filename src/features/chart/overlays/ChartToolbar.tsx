@@ -5,15 +5,21 @@ export interface ChartToolbarProps {
   activeTool: ChartAnnotationType | null;
   annotationCount: number;
   onSelectTool: (tool: ChartAnnotationType | null) => void;
+  /**
+   * Minimalist mode hides advanced/day-trading tools (Fibonacci & Trade Marker)
+   * while keeping them available in the codebase for future re-activation or tests.
+   */
+  showAdvancedTools?: boolean;
 }
 
 export function ChartToolbar({
   activeTool,
   annotationCount,
   onSelectTool,
+  showAdvancedTools = true,
 }: ChartToolbarProps) {
   return (
-    <div className="pointer-events-auto absolute top-4 right-4 z-20 flex items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-900/90 p-1 backdrop-blur-md shadow-xl">
+    <div className="pointer-events-auto absolute top-4 right-28 z-20 flex items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-900/90 p-1 backdrop-blur-md shadow-xl">
       <button
         type="button"
         title="Pointer (Select / Drag / Pan Chart)"
@@ -56,33 +62,37 @@ export function ChartToolbar({
         <span>Trendline</span>
       </button>
 
-      <button
-        type="button"
-        title="Fibonacci Retracement (Click twice to calculate Fibonacci retracement levels)"
-        onClick={() => onSelectTool(activeTool === 'fibonacci' ? null : 'fibonacci')}
-        className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition ${
-          activeTool === 'fibonacci'
-            ? 'bg-purple-500 text-slate-950 shadow-sm font-semibold'
-            : 'text-slate-400 hover:text-purple-300'
-        }`}
-      >
-        <Percent className="h-3.5 w-3.5" />
-        <span>Fib</span>
-      </button>
+      {showAdvancedTools && (
+        <>
+          <button
+            type="button"
+            title="Fibonacci Retracement (Click twice to calculate Fibonacci retracement levels)"
+            onClick={() => onSelectTool(activeTool === 'fibonacci' ? null : 'fibonacci')}
+            className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition ${
+              activeTool === 'fibonacci'
+                ? 'bg-purple-500 text-slate-950 shadow-sm font-semibold'
+                : 'text-slate-400 hover:text-purple-300'
+            }`}
+          >
+            <Percent className="h-3.5 w-3.5" />
+            <span>Fib</span>
+          </button>
 
-      <button
-        type="button"
-        title="Trade Marker (Click candle to place Buy/Sell execution marker)"
-        onClick={() => onSelectTool(activeTool === 'trade_marker' ? null : 'trade_marker')}
-        className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition ${
-          activeTool === 'trade_marker'
-            ? 'bg-emerald-500 text-slate-950 shadow-sm font-semibold'
-            : 'text-slate-400 hover:text-emerald-300'
-        }`}
-      >
-        <BookmarkCheck className="h-3.5 w-3.5" />
-        <span>Trade Marker</span>
-      </button>
+          <button
+            type="button"
+            title="Trade Marker (Click candle to place Buy/Sell execution marker)"
+            onClick={() => onSelectTool(activeTool === 'trade_marker' ? null : 'trade_marker')}
+            className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition ${
+              activeTool === 'trade_marker'
+                ? 'bg-emerald-500 text-slate-950 shadow-sm font-semibold'
+                : 'text-slate-400 hover:text-emerald-300'
+            }`}
+          >
+            <BookmarkCheck className="h-3.5 w-3.5" />
+            <span>Trade Marker</span>
+          </button>
+        </>
+      )}
 
       {annotationCount > 0 && (
         <div className="ml-1 flex items-center border-l border-slate-800 pl-2 pr-1">
