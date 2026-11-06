@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { useStore } from 'zustand';
 import {
   CachedMarketDataProvider,
+  DEFAULT_FIREBASE_CONFIG,
   DeterministicDemoProvider,
   FinnhubProvider,
+  FirebaseSyncClient,
   IndexedDBStorageRepository,
   ResilientMarketDataProvider,
   YahooFinanceProvider,
@@ -11,20 +13,49 @@ import {
   createMarketStore,
   createPreferencesStore,
   createWatchlistStore,
+  garbageCollectWorkspace,
   getCandleSeriesKey,
+  mergeWorkspaceSnapshots,
+  parseWorkspaceBackup,
+  serializeWorkspaceBackup,
+  type CloudAuthSession,
+  type FirebaseConfig,
   type MarketDataProvider,
   type Timeframe,
+  type WorkspaceBackup,
 } from './core';
 import { ChartContainer } from './features/chart/ChartContainer';
 import { ChartToolbar } from './features/chart/overlays/ChartToolbar';
 import { OverlayCanvas } from './features/chart/overlays/OverlayCanvas';
-// Minimalist Mode: TradeJournalDrawer is hidden for beginner-friendly long-term tracking
-// import { TradeJournalDrawer } from './features/journal/TradeJournalDrawer';
 import { TopHeaderBar } from './ui/layout/TopHeaderBar';
-import type {
-  ProviderMode,
-} from './ui/providers/ProviderSettingsPopover';
+import type { ProviderMode } from './ui/providers/ProviderSettingsPopover';
+import type { EntityCounts } from './ui/sync/CloudSyncPopover';
+import { signInWithGooglePopup } from './ui/sync/googlePopupAuth';
 import { WatchlistSidebar } from './ui/watchlist/WatchlistSidebar';
+
+const STORAGE_AUTH_KEY = 'marketview:cloud_auth_session';
+
+function loadStoredAuthSession(): CloudAuthSession | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_AUTH_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as CloudAuthSession;
+  } catch {
+    return null;
+  }
+}
+
+function saveStoredAuthSession(session: CloudAuthSession | null) {
+  try {
+    if (session) {
+      localStorage.setItem(STORAGE_AUTH_KEY, JSON.stringify(session));
+    } else {
+      localStorage.removeItem(STORAGE_AUTH_KEY);
+    }
+  } catch {
+    // Ignore storage quota / access errors
+  }
+}
 
 function createConfiguredProvider(
   mode: ProviderMode,
@@ -62,25 +93,32 @@ export function App() {
     initialEnvKey.length > 0 ? 'finnhub' : 'yahoo';
 
   const [focusRevision, setFocusRevision] = useState(0);
+  const [authSession, setAuthSession] = useState<CloudAuthSession | null>(() =>
+    loadStoredAuthSession()
+  );
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [cloudSyncError, setCloudSyncError] = useState<string | null>(null);
 
   const {
+    repo,
     marketStore,
     watchlistStore,
     annotationStore,
     preferencesStore,
   } = useMemo(() => {
     const cachedProvider = createConfiguredProvider(initialMode, initialEnvKey);
-    const repo = new IndexedDBStorageRepository();
+    const idbRepo = new IndexedDBStorageRepository();
 
     return {
+      repo: idbRepo,
       marketStore: createMarketStore(cachedProvider, 'AAPL', '1D', 365),
-      watchlistStore: createWatchlistStore(repo),
-      annotationStore: createAnnotationStore(repo),
-      preferencesStore: createPreferencesStore(repo, {
+      watchlistStore: createWatchlistStore(idbRepo),
+      annotationStore: createAnnotationStore(idbRepo),
+      preferencesStore: createPreferencesStore(idbRepo, {
         providerMode: initialMode,
         finnhubApiKey: initialEnvKey,
         pollIntervalSec: 0,
-        activeIndicators: ['CANDLES', 'VOLUME', 'PRICE_15M'],
+        activeIndicators: ['CANDLES', 'VOLUME'],
       }),
     };
   }, [initialMode, initialEnvKey]);
@@ -206,6 +244,7 @@ export function App() {
         if (selectedId) {
           e.preventDefault();
           void annotationStore.getState().deleteAnnotation(selectedId);
+          void preferencesStore.getState().recordTombstone(selectedId);
         }
         return;
       }
@@ -236,8 +275,6 @@ export function App() {
           .setActiveTool(current === 'trendline' ? null : 'trendline');
         return;
       }
-
-      // Minimalist Mode: Fibonacci ('f'), Trade Marker ('m'), and Journal ('j') shortcuts are disabled.
 
       const tfMap: Record<string, Timeframe> = {
         '1': '1D',
@@ -311,6 +348,256 @@ export function App() {
     (a) => a.ticker === activeTicker
   );
 
+  // Cloud Sync Snapshot & Quota Stats
+  const currentSnapshot: WorkspaceBackup = useMemo(
+    () => ({
+      version: 1,
+      exportedAt: Math.floor(Date.now() / 1000),
+      watchlists,
+      annotations,
+      trades: [],
+      alerts: [],
+      deletedIds: savedPreferences.deletedIds ?? {},
+      preferences: savedPreferences,
+    }),
+    [watchlists, annotations, savedPreferences]
+  );
+
+  const workspaceBytes = useMemo(() => {
+    try {
+      const json = serializeWorkspaceBackup(currentSnapshot);
+      return typeof TextEncoder !== 'undefined'
+        ? new TextEncoder().encode(json).length
+        : json.length;
+    } catch {
+      return 0;
+    }
+  }, [currentSnapshot]);
+
+  const entityCounts: EntityCounts = useMemo(
+    () => ({
+      watchlists: watchlists.length,
+      annotations: annotations.length,
+      trades: 0,
+      alerts: 0,
+      tombstones: Object.keys(savedPreferences.deletedIds ?? {}).length,
+    }),
+    [watchlists.length, annotations.length, savedPreferences.deletedIds]
+  );
+
+  // Milestone 12 Cloud Sync Handlers
+  const handleSyncNow = async (
+    sessionOverride?: CloudAuthSession,
+    configOverride?: FirebaseConfig
+  ) => {
+    const activeSession = sessionOverride ?? authSession;
+    if (!activeSession) {
+      setCloudSyncError('Please sign in to sync with your cloud vault.');
+      return;
+    }
+
+    const effectiveApiKey =
+      configOverride?.apiKey ||
+      savedPreferences.firebaseApiKey ||
+      (import.meta.env.VITE_FIREBASE_API_KEY as string | undefined) ||
+      DEFAULT_FIREBASE_CONFIG.apiKey;
+    const effectiveProjectId =
+      configOverride?.projectId ||
+      savedPreferences.firebaseProjectId ||
+      (import.meta.env.VITE_FIREBASE_PROJECT_ID as string | undefined) ||
+      DEFAULT_FIREBASE_CONFIG.projectId;
+
+    if (!effectiveApiKey || !effectiveProjectId) {
+      setCloudSyncError(
+        'Missing Firebase credentials. Please configure them in Cloud Sync settings.'
+      );
+      return;
+    }
+
+    setIsSyncing(true);
+    setCloudSyncError(null);
+
+    try {
+      const client = new FirebaseSyncClient({
+        apiKey: effectiveApiKey,
+        projectId: effectiveProjectId,
+      });
+
+      let currentSession = activeSession;
+      if (currentSession.expiresAtMs < Date.now() + 60_000) {
+        currentSession = await client.refreshSession(currentSession);
+        setAuthSession(currentSession);
+        saveStoredAuthSession(currentSession);
+      }
+
+      // 1. Pull remote workspace
+      const remote = await client.pullWorkspace(currentSession);
+
+      // 2. Current local snapshot
+      const local: WorkspaceBackup = {
+        version: 1,
+        exportedAt: Math.floor(Date.now() / 1000),
+        watchlists: watchlistStore.getState().watchlists,
+        annotations: annotationStore.getState().annotations,
+        trades: [],
+        alerts: [],
+        deletedIds: preferencesStore.getState().preferences.deletedIds ?? {},
+        preferences: preferencesStore.getState().preferences,
+      };
+
+      let finalToPush: WorkspaceBackup;
+      if (remote) {
+        // 3. Multi-device merge with deletion tombstones & anti-bombing quotas
+        finalToPush = mergeWorkspaceSnapshots(local, remote);
+
+        // 4. Update local repositories and stores atomically
+        await repo.saveWatchlists(finalToPush.watchlists);
+        await watchlistStore.getState().hydrate();
+
+        await repo.saveAnnotations(finalToPush.annotations);
+        await annotationStore.getState().hydrate();
+
+        if (finalToPush.preferences) {
+          await preferencesStore.getState().updatePreferences({
+            ...finalToPush.preferences,
+            deletedIds: finalToPush.deletedIds,
+          });
+        }
+      } else {
+        finalToPush = garbageCollectWorkspace(local);
+      }
+
+      // 5. Push final merged payload to Firestore
+      const res = await client.pushWorkspace(currentSession, finalToPush);
+      await preferencesStore.getState().updatePreferences({
+        lastCloudSyncTimestamp: res.syncedAt,
+      });
+    } catch (err) {
+      setCloudSyncError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleSignInCloud = async (
+    email: string,
+    pass: string,
+    config: FirebaseConfig
+  ) => {
+    const client = new FirebaseSyncClient(config);
+    const session = await client.signInWithEmail(email, pass);
+    setAuthSession(session);
+    saveStoredAuthSession(session);
+    await preferencesStore.getState().updatePreferences({
+      firebaseApiKey: config.apiKey,
+      firebaseProjectId: config.projectId,
+      cloudSyncEmail: session.email,
+      cloudSyncUid: session.uid,
+    });
+    await handleSyncNow(session, config);
+  };
+
+  const handleSignUpCloud = async (
+    email: string,
+    pass: string,
+    config: FirebaseConfig
+  ) => {
+    const client = new FirebaseSyncClient(config);
+    const session = await client.signUpWithEmail(email, pass);
+    setAuthSession(session);
+    saveStoredAuthSession(session);
+    await preferencesStore.getState().updatePreferences({
+      firebaseApiKey: config.apiKey,
+      firebaseProjectId: config.projectId,
+      cloudSyncEmail: session.email,
+      cloudSyncUid: session.uid,
+    });
+    await handleSyncNow(session, config);
+  };
+
+  const handleSignInWithGoogle = async (config: FirebaseConfig) => {
+    const session = await signInWithGooglePopup(config);
+    setAuthSession(session);
+    saveStoredAuthSession(session);
+    await preferencesStore.getState().updatePreferences({
+      firebaseApiKey: config.apiKey,
+      firebaseProjectId: config.projectId,
+      cloudSyncEmail: session.email,
+      cloudSyncUid: session.uid,
+    });
+    await handleSyncNow(session, config);
+  };
+
+  const handleSignOutCloud = () => {
+    setAuthSession(null);
+    saveStoredAuthSession(null);
+    void preferencesStore.getState().updatePreferences({
+      cloudSyncEmail: '',
+      cloudSyncUid: '',
+    });
+  };
+
+  const handleDeleteCloudVault = async () => {
+    if (!authSession) return;
+    const effectiveApiKey =
+      savedPreferences.firebaseApiKey ||
+      (import.meta.env.VITE_FIREBASE_API_KEY as string | undefined) ||
+      DEFAULT_FIREBASE_CONFIG.apiKey;
+    const effectiveProjectId =
+      savedPreferences.firebaseProjectId ||
+      (import.meta.env.VITE_FIREBASE_PROJECT_ID as string | undefined) ||
+      DEFAULT_FIREBASE_CONFIG.projectId;
+
+    const client = new FirebaseSyncClient({
+      apiKey: effectiveApiKey,
+      projectId: effectiveProjectId,
+    });
+
+    await client.deleteWorkspaceVault(authSession);
+    await preferencesStore.getState().updatePreferences({
+      lastCloudSyncTimestamp: null,
+    });
+  };
+
+  const handleExportLocalJson = () => {
+    try {
+      const serialized = serializeWorkspaceBackup(currentSnapshot);
+      const blob = new Blob([serialized], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `marketview-workspace-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setCloudSyncError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleImportLocalJson = async (file: File) => {
+    const text = await file.text();
+    const backup = parseWorkspaceBackup(text);
+    const cleaned = garbageCollectWorkspace(backup);
+
+    await repo.saveWatchlists(cleaned.watchlists);
+    await watchlistStore.getState().hydrate();
+
+    await repo.saveAnnotations(cleaned.annotations);
+    await annotationStore.getState().hydrate();
+
+    if (cleaned.preferences) {
+      await preferencesStore.getState().updatePreferences({
+        ...cleaned.preferences,
+        deletedIds: {
+          ...(savedPreferences.deletedIds ?? {}),
+          ...(cleaned.deletedIds ?? {}),
+        },
+      });
+    }
+  };
+
   return (
     <div className="relative flex h-screen w-screen flex-col overflow-hidden bg-slate-950 text-slate-100">
       <TopHeaderBar
@@ -326,6 +613,27 @@ export function App() {
         showJournal={false}
         showAlerts={false}
         showLivePollToggle={false}
+        showSync={true}
+        cloudAuthSession={authSession}
+        isSyncing={isSyncing}
+        cloudSyncError={cloudSyncError}
+        workspaceBytes={workspaceBytes}
+        entityCounts={entityCounts}
+        userPreferences={savedPreferences}
+        onSignInCloud={handleSignInCloud}
+        onSignUpCloud={handleSignUpCloud}
+        onSignInWithGoogle={handleSignInWithGoogle}
+        onSignOutCloud={handleSignOutCloud}
+        onSyncNow={() => handleSyncNow()}
+        onDeleteCloudVault={handleDeleteCloudVault}
+        onExportLocalJson={handleExportLocalJson}
+        onImportLocalJson={handleImportLocalJson}
+        onUpdateFirebaseConfig={(config) => {
+          void preferencesStore.getState().updatePreferences({
+            firebaseApiKey: config.apiKey,
+            firebaseProjectId: config.projectId,
+          });
+        }}
         isSidebarCollapsed={savedPreferences.isSidebarCollapsed}
         onToggleSidebar={() => {
           void preferencesStore.getState().updatePreferences({
@@ -377,6 +685,7 @@ export function App() {
           }}
           onDeleteWatchlist={async (id) => {
             await watchlistStore.getState().deleteWatchlist(id);
+            await preferencesStore.getState().recordTombstone(id);
           }}
           onAddTicker={async (watchlistId, ticker) => {
             await watchlistStore.getState().addTicker(watchlistId, ticker);
@@ -435,6 +744,7 @@ export function App() {
                 }}
                 onDeleteAnnotation={async (id) => {
                   await annotationStore.getState().deleteAnnotation(id);
+                  await preferencesStore.getState().recordTombstone(id);
                 }}
               />
             </>

@@ -25,6 +25,7 @@ export * from './stores/preferencesStore';
 
 export * from './indicators/technicalIndicators';
 export * from './serialization/workspaceExport';
+export * from './sync/firebaseSync';
 
 
 

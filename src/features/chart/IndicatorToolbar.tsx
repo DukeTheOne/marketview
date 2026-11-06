@@ -1,5 +1,6 @@
 import {
   formatCompactVolume,
+  getActiveChartStyle,
   type ChartIndicatorsSummary,
   type IndicatorId,
 } from '../../core/indicators/technicalIndicators';
@@ -20,31 +21,11 @@ interface OverlayToggleConfig {
 
 const OVERLAY_TOGGLES: OverlayToggleConfig[] = [
   {
-    id: 'CANDLES',
-    label: 'CANDLES',
-    dotClass: 'bg-teal-400',
-    activeClass: 'border-teal-500/50 bg-teal-500/15 text-teal-200',
-    formatValue: (s) =>
-      s.latestPrice !== undefined && s.latestPrice !== null
-        ? s.latestPrice.toFixed(2)
-        : null,
-  },
-  {
     id: 'VOLUME',
     label: 'VOL',
     dotClass: 'bg-emerald-400',
     activeClass: 'border-emerald-500/50 bg-emerald-500/15 text-emerald-200',
     formatValue: (s) => formatCompactVolume(s.latestVolume),
-  },
-  {
-    id: 'PRICE_15M',
-    label: '15m PRICE',
-    dotClass: 'bg-blue-500',
-    activeClass: 'border-blue-500/50 bg-blue-500/15 text-blue-200',
-    formatValue: (s) =>
-      s.latestPrice !== undefined && s.latestPrice !== null
-        ? s.latestPrice.toFixed(2)
-        : null,
   },
   {
     id: 'SMA_20',
@@ -84,6 +65,13 @@ export function IndicatorToolbar({
   onToggleIndicator,
   summary,
 }: IndicatorToolbarProps) {
+  const activeStyle = getActiveChartStyle(activeIndicators);
+  const isCandles = activeStyle === 'CANDLES';
+  const priceReadout =
+    summary.latestPrice !== undefined && summary.latestPrice !== null
+      ? summary.latestPrice.toFixed(2)
+      : null;
+
   const rsi = summary.rsi14;
   const isOverbought = rsi !== null && rsi >= 70;
   const isOversold = rsi !== null && rsi <= 30;
@@ -99,6 +87,50 @@ export function IndicatorToolbar({
       data-testid="indicator-toolbar"
       className="pointer-events-auto absolute top-14 left-4 z-10 flex flex-wrap items-center gap-1.5"
     >
+      {/* Primary Chart Style Toggle: CANDLE / PRICE */}
+      <button
+        type="button"
+        data-testid="indicator-toggle-CANDLES"
+        data-chart-style={activeStyle}
+        aria-pressed={true}
+        onClick={() => onToggleIndicator('CANDLES')}
+        className={`flex items-center gap-1.5 rounded border px-2 py-1 font-mono text-[11px] transition-colors backdrop-blur-sm ${
+          isCandles
+            ? 'border-teal-500/50 bg-teal-500/15 text-teal-200'
+            : 'border-blue-500/50 bg-blue-500/15 text-blue-200'
+        }`}
+      >
+        <span
+          className={`h-1.5 w-1.5 rounded-full ${
+            isCandles ? 'bg-teal-400' : 'bg-blue-400'
+          }`}
+        />
+        <span className="flex items-center gap-1 font-semibold">
+          <span
+            className={
+              isCandles
+                ? 'text-teal-200 font-bold'
+                : 'text-slate-500 font-normal'
+            }
+          >
+            CANDLE
+          </span>
+          <span className="text-slate-600">/</span>
+          <span
+            className={
+              !isCandles
+                ? 'text-blue-200 font-bold'
+                : 'text-slate-500 font-normal'
+            }
+          >
+            PRICE
+          </span>
+        </span>
+        {priceReadout !== null && (
+          <span className="text-[10px] opacity-90">{priceReadout}</span>
+        )}
+      </button>
+
       {OVERLAY_TOGGLES.map((item) => {
         const isActive = activeIndicators.includes(item.id);
         const readout = item.formatValue(summary);

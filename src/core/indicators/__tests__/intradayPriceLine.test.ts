@@ -7,6 +7,9 @@ import {
   computeAutoCandlesLod,
   computeAutoIntradayLod,
   findNearestHoverPoint,
+  getActiveChartStyle,
+  normalizeExclusiveChartStyle,
+  toggleExclusiveChartStyle,
   type IntradayPricePoint,
   type ProjectedHoverPoint,
 } from '../technicalIndicators';
@@ -306,6 +309,53 @@ describe('15-Minute Intraday Price Line Engine', () => {
       expect(
         computeAutoCandlesLod(candles, { from: 50, to: 70 }, '1W')
       ).toBe(true);
+    });
+  });
+
+  describe('Exclusive Primary Chart Style Helpers (CANDLES vs PRICE_15M)', () => {
+    it('getActiveChartStyle determines active primary style, defaulting to CANDLES', () => {
+      // Default to CANDLES when CANDLES is present
+      expect(getActiveChartStyle(['CANDLES', 'VOLUME'])).toBe('CANDLES');
+
+      // Returns PRICE_15M when PRICE_15M is present without CANDLES
+      expect(getActiveChartStyle(['PRICE_15M', 'VOLUME'])).toBe('PRICE_15M');
+
+      // Defaults to CANDLES when both are passed
+      expect(getActiveChartStyle(['CANDLES', 'PRICE_15M', 'VOLUME'])).toBe('CANDLES');
+
+      // Defaults to CANDLES when neither is passed
+      expect(getActiveChartStyle(['VOLUME', 'SMA_20'])).toBe('CANDLES');
+      expect(getActiveChartStyle([])).toBe('CANDLES');
+    });
+
+    it('normalizeExclusiveChartStyle ensures exactly one primary style is active while preserving others', () => {
+      // Strips PRICE_15M when both are present and preserves others
+      expect(
+        normalizeExclusiveChartStyle(['CANDLES', 'VOLUME', 'PRICE_15M', 'SMA_20'])
+      ).toEqual(['CANDLES', 'VOLUME', 'SMA_20']);
+
+      // Keeps PRICE_15M when it is the sole primary style
+      expect(
+        normalizeExclusiveChartStyle(['PRICE_15M', 'VOLUME', 'SMA_20'])
+      ).toEqual(['PRICE_15M', 'VOLUME', 'SMA_20']);
+
+      // Injects CANDLES when neither is present
+      expect(normalizeExclusiveChartStyle(['VOLUME'])).toEqual(['CANDLES', 'VOLUME']);
+      expect(normalizeExclusiveChartStyle([])).toEqual(['CANDLES']);
+    });
+
+    it('toggleExclusiveChartStyle switches between CANDLES and PRICE_15M while preserving overlays', () => {
+      // CANDLES -> PRICE_15M
+      const toggled1 = toggleExclusiveChartStyle(['CANDLES', 'VOLUME', 'SMA_20']);
+      expect(toggled1).toEqual(['PRICE_15M', 'VOLUME', 'SMA_20']);
+
+      // PRICE_15M -> CANDLES
+      const toggled2 = toggleExclusiveChartStyle(toggled1);
+      expect(toggled2).toEqual(['CANDLES', 'VOLUME', 'SMA_20']);
+
+      // Toggling from an array without either primary style starts with PRICE_15M (since default was CANDLES)
+      const toggledFromNone = toggleExclusiveChartStyle(['VOLUME']);
+      expect(toggledFromNone).toEqual(['PRICE_15M', 'VOLUME']);
     });
   });
 });

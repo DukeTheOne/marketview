@@ -13,6 +13,10 @@ export interface PreferencesState {
   updatePreferences: (
     patch: Partial<UserPreferences>
   ) => Promise<UserPreferences>;
+  recordTombstone: (
+    id: string,
+    timestampSec?: number
+  ) => Promise<UserPreferences>;
   resetPreferences: () => Promise<UserPreferences>;
 }
 
@@ -56,6 +60,20 @@ export function createPreferencesStore(
       const next = UserPreferencesSchema.parse({
         ...get().preferences,
         ...patch,
+      });
+
+      set({ preferences: next });
+      await repository?.savePreferences?.(next);
+      return next;
+    },
+
+    recordTombstone: async (id: string, timestampSec?: number) => {
+      const now = timestampSec ?? Math.floor(Date.now() / 1000);
+      const current = get().preferences.deletedIds ?? {};
+      const updated = { ...current, [id]: now };
+      const next = UserPreferencesSchema.parse({
+        ...get().preferences,
+        deletedIds: updated,
       });
 
       set({ preferences: next });

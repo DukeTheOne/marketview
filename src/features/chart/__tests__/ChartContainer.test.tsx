@@ -26,7 +26,7 @@ describe('ChartContainer & Auto-Adaptive LOD Indicator', () => {
     },
   ];
 
-  it('renders ChartContainer with default indicators including CANDLES and PRICE_15M', () => {
+  it('renders ChartContainer with default indicators including unified CANDLE / PRICE toggle and VOLUME', () => {
     const markup = renderToStaticMarkup(
       createElement(ChartContainer, {
         ticker: 'AAPL',
@@ -37,9 +37,10 @@ describe('ChartContainer & Auto-Adaptive LOD Indicator', () => {
 
     expect(markup).toContain('indicator-toolbar');
     expect(markup).toContain('indicator-toggle-CANDLES');
-    expect(markup).toContain('CANDLES');
-    expect(markup).toContain('indicator-toggle-PRICE_15M');
-    expect(markup).toContain('15m PRICE');
+    expect(markup).toContain('data-chart-style="CANDLES"');
+    expect(markup).toContain('CANDLE');
+    expect(markup).toContain('PRICE');
+    expect(markup).not.toContain('indicator-toggle-PRICE_15M');
     expect(markup).toContain('156.50'); // latestPrice formatted readout
     expect(markup).toContain('indicator-toggle-VOLUME');
     expect(markup).toContain('indicator-toggle-SMA_20');
@@ -48,96 +49,46 @@ describe('ChartContainer & Auto-Adaptive LOD Indicator', () => {
     );
   });
 
-  describe('3-Tier Auto-Adaptive LOD', () => {
-    it('Tier 1 (< 1M): auto-hides CANDLES (aria-pressed="false") and auto-shows PRICE_15M (aria-pressed="true") for 1D and 1W', () => {
-      const markup1D = renderToStaticMarkup(
+  describe('Exclusive CANDLES vs PRICE_15M Primary Style Mode', () => {
+    it('defaults to CANDLES mode across all timeframes (1D, 1W, 1M, 3M, 1Y)', () => {
+      const timeframes = ['1D', '1W', '1M', '3M', '1Y'] as const;
+
+      for (const tf of timeframes) {
+        const markup = renderToStaticMarkup(
+          createElement(ChartContainer, {
+            ticker: 'AAPL',
+            timeframe: tf,
+            candles: mockCandles,
+          })
+        );
+
+        // Always defaults to CANDLES mode across every timeframe
+        expect(markup).toMatch(
+          /data-testid="indicator-toggle-CANDLES"[^>]*data-chart-style="CANDLES"/
+        );
+        expect(markup).not.toContain('data-testid="indicator-toggle-PRICE_15M"');
+      }
+    });
+
+    it('renders PRICE active styling when initialized with PRICE_15M mode', () => {
+      const markup = renderToStaticMarkup(
         createElement(ChartContainer, {
           ticker: 'AAPL',
           timeframe: '1D',
           candles: mockCandles,
+          defaultIndicators: ['PRICE_15M', 'VOLUME'],
         })
       );
 
-      // In 1D: CANDLES is OFF, PRICE_15M is ON
-      expect(markup1D).toMatch(
-        /data-testid="indicator-toggle-CANDLES"[^>]*aria-pressed="false"/
+      expect(markup).toMatch(
+        /data-testid="indicator-toggle-CANDLES"[^>]*data-chart-style="PRICE_15M"/
       );
-      expect(markup1D).toMatch(
-        /data-testid="indicator-toggle-PRICE_15M"[^>]*aria-pressed="true"/
-      );
-
-      const markup1W = renderToStaticMarkup(
-        createElement(ChartContainer, {
-          ticker: 'AAPL',
-          timeframe: '1W',
-          candles: mockCandles,
-        })
-      );
-
-      // In 1W: CANDLES is OFF, PRICE_15M is ON
-      expect(markup1W).toMatch(
-        /data-testid="indicator-toggle-CANDLES"[^>]*aria-pressed="false"/
-      );
-      expect(markup1W).toMatch(
-        /data-testid="indicator-toggle-PRICE_15M"[^>]*aria-pressed="true"/
-      );
-    });
-
-    it('Tier 2 (1M to < 3M): auto-enables BOTH CANDLES (aria-pressed="true") and PRICE_15M (aria-pressed="true") for 1M', () => {
-      const markup1M = renderToStaticMarkup(
-        createElement(ChartContainer, {
-          ticker: 'AAPL',
-          timeframe: '1M',
-          candles: mockCandles,
-        })
-      );
-
-      // In 1M: CANDLES is ON, PRICE_15M is ON
-      expect(markup1M).toMatch(
-        /data-testid="indicator-toggle-CANDLES"[^>]*aria-pressed="true"/
-      );
-      expect(markup1M).toMatch(
-        /data-testid="indicator-toggle-PRICE_15M"[^>]*aria-pressed="true"/
-      );
-    });
-
-    it('Tier 3 (>= 3M): auto-enables CANDLES (aria-pressed="true") and auto-hides PRICE_15M (aria-pressed="false") for 3M and 1Y', () => {
-      const markup3M = renderToStaticMarkup(
-        createElement(ChartContainer, {
-          ticker: 'AAPL',
-          timeframe: '3M',
-          candles: mockCandles,
-        })
-      );
-
-      // In 3M: CANDLES is ON, PRICE_15M is OFF
-      expect(markup3M).toMatch(
-        /data-testid="indicator-toggle-CANDLES"[^>]*aria-pressed="true"/
-      );
-      expect(markup3M).toMatch(
-        /data-testid="indicator-toggle-PRICE_15M"[^>]*aria-pressed="false"/
-      );
-
-      const markup1Y = renderToStaticMarkup(
-        createElement(ChartContainer, {
-          ticker: 'AAPL',
-          timeframe: '1Y',
-          candles: mockCandles,
-        })
-      );
-
-      // In 1Y: CANDLES is ON, PRICE_15M is OFF
-      expect(markup1Y).toMatch(
-        /data-testid="indicator-toggle-CANDLES"[^>]*aria-pressed="true"/
-      );
-      expect(markup1Y).toMatch(
-        /data-testid="indicator-toggle-PRICE_15M"[^>]*aria-pressed="false"/
-      );
+      expect(markup).toContain('text-blue-200');
     });
   });
 
   describe('IndicatorToolbar & Volume Stability', () => {
-    it('shows active state and formatted price when CANDLES and PRICE_15M are active', () => {
+    it('shows active CANDLES state and formatted price readout', () => {
       const summary: ChartIndicatorsSummary = {
         sma20: 152.3,
         ema50: null,
@@ -151,7 +102,7 @@ describe('ChartContainer & Auto-Adaptive LOD Indicator', () => {
       const handleToggle = vi.fn();
       const markup = renderToStaticMarkup(
         createElement(IndicatorToolbar, {
-          activeIndicators: ['CANDLES', 'PRICE_15M', 'VOLUME'],
+          activeIndicators: ['CANDLES', 'VOLUME'],
           onToggleIndicator: handleToggle,
           summary,
         })
@@ -159,10 +110,7 @@ describe('ChartContainer & Auto-Adaptive LOD Indicator', () => {
 
       expect(markup).toContain('data-testid="indicator-toggle-CANDLES"');
       expect(markup).toMatch(
-        /data-testid="indicator-toggle-CANDLES"[^>]*aria-pressed="true"/
-      );
-      expect(markup).toMatch(
-        /data-testid="indicator-toggle-PRICE_15M"[^>]*aria-pressed="true"/
+        /data-testid="indicator-toggle-CANDLES"[^>]*data-chart-style="CANDLES"/
       );
       expect(markup).toMatch(
         /data-testid="indicator-toggle-VOLUME"[^>]*aria-pressed="true"/
@@ -170,7 +118,7 @@ describe('ChartContainer & Auto-Adaptive LOD Indicator', () => {
       expect(markup).toContain('156.50');
     });
 
-    it('reflects inactive state when CANDLES is toggled off', () => {
+    it('reflects PRICE_15M state when toggled to PRICE mode', () => {
       const summary: ChartIndicatorsSummary = {
         sma20: 152.3,
         ema50: null,
@@ -192,11 +140,9 @@ describe('ChartContainer & Auto-Adaptive LOD Indicator', () => {
 
       expect(markup).toContain('data-testid="indicator-toggle-CANDLES"');
       expect(markup).toMatch(
-        /data-testid="indicator-toggle-CANDLES"[^>]*aria-pressed="false"/
+        /data-testid="indicator-toggle-CANDLES"[^>]*data-chart-style="PRICE_15M"/
       );
-      expect(markup).toMatch(
-        /data-testid="indicator-toggle-PRICE_15M"[^>]*aria-pressed="true"/
-      );
+      expect(markup).toContain('text-blue-200 font-bold');
     });
 
     it('supports repeated toggling of VOLUME without clearing CANDLES or breaking markup structure', () => {
@@ -220,7 +166,7 @@ describe('ChartContainer & Auto-Adaptive LOD Indicator', () => {
         })
       );
       expect(markup1).toMatch(/data-testid="indicator-toggle-VOLUME"[^>]*aria-pressed="true"/);
-      expect(markup1).toMatch(/data-testid="indicator-toggle-CANDLES"[^>]*aria-pressed="true"/);
+      expect(markup1).toMatch(/data-testid="indicator-toggle-CANDLES"[^>]*data-chart-style="CANDLES"/);
 
       // Toggle state 2: VOL off (first toggle)
       const state2 = ['CANDLES'] as const;
@@ -232,7 +178,7 @@ describe('ChartContainer & Auto-Adaptive LOD Indicator', () => {
         })
       );
       expect(markup2).toMatch(/data-testid="indicator-toggle-VOLUME"[^>]*aria-pressed="false"/);
-      expect(markup2).toMatch(/data-testid="indicator-toggle-CANDLES"[^>]*aria-pressed="true"/);
+      expect(markup2).toMatch(/data-testid="indicator-toggle-CANDLES"[^>]*data-chart-style="CANDLES"/);
 
       // Toggle state 3: VOL on again (second toggle)
       const markup3 = renderToStaticMarkup(
@@ -243,7 +189,7 @@ describe('ChartContainer & Auto-Adaptive LOD Indicator', () => {
         })
       );
       expect(markup3).toMatch(/data-testid="indicator-toggle-VOLUME"[^>]*aria-pressed="true"/);
-      expect(markup3).toMatch(/data-testid="indicator-toggle-CANDLES"[^>]*aria-pressed="true"/);
+      expect(markup3).toMatch(/data-testid="indicator-toggle-CANDLES"[^>]*data-chart-style="CANDLES"/);
 
       // Toggle state 4: VOL off again (third toggle)
       const markup4 = renderToStaticMarkup(
@@ -254,7 +200,7 @@ describe('ChartContainer & Auto-Adaptive LOD Indicator', () => {
         })
       );
       expect(markup4).toMatch(/data-testid="indicator-toggle-VOLUME"[^>]*aria-pressed="false"/);
-      expect(markup4).toMatch(/data-testid="indicator-toggle-CANDLES"[^>]*aria-pressed="true"/);
+      expect(markup4).toMatch(/data-testid="indicator-toggle-CANDLES"[^>]*data-chart-style="CANDLES"/);
     });
   });
 });

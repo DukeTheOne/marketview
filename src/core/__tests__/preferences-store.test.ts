@@ -20,8 +20,14 @@ describe('UserPreferencesSchema & Repository/Store Persistence', () => {
       providerMode: 'yahoo',
       finnhubApiKey: '',
       pollIntervalSec: 15,
-      activeIndicators: ['CANDLES', 'VOLUME', 'PRICE_15M'],
+      activeIndicators: ['CANDLES', 'VOLUME'],
       isSidebarCollapsed: false,
+      firebaseApiKey: '',
+      firebaseProjectId: '',
+      deletedIds: {},
+      cloudSyncEmail: '',
+      cloudSyncUid: '',
+      lastCloudSyncTimestamp: null,
     });
     expect(DEFAULT_USER_PREFERENCES).toEqual(parsed);
   });
@@ -167,5 +173,27 @@ describe('UserPreferencesSchema & Repository/Store Persistence', () => {
     expect(reset).toEqual(DEFAULT_USER_PREFERENCES);
     expect(store.getState().preferences).toEqual(DEFAULT_USER_PREFERENCES);
     expect(await repo.getPreferences()).toEqual(DEFAULT_USER_PREFERENCES);
+  });
+
+  it('records deletion tombstones into preferences and persists them', async () => {
+    const repo = new InMemoryStorageRepository();
+    const store = createPreferencesStore(repo);
+
+    await store.getState().recordTombstone('ann-123', 1711900000);
+    expect(store.getState().preferences.deletedIds).toEqual({
+      'ann-123': 1711900000,
+    });
+
+    await store.getState().recordTombstone('wl-456', 1711900100);
+    expect(store.getState().preferences.deletedIds).toEqual({
+      'ann-123': 1711900000,
+      'wl-456': 1711900100,
+    });
+
+    const persisted = await repo.getPreferences();
+    expect(persisted?.deletedIds).toEqual({
+      'ann-123': 1711900000,
+      'wl-456': 1711900100,
+    });
   });
 });

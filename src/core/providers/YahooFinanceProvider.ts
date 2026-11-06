@@ -97,6 +97,43 @@ function findLatestPositive(
 }
 
 /**
+ * Default Yahoo fetcher that tries `/api/yahoo/*` first (Vite dev / Vercel / Node server),
+ * and automatically falls back to public CORS proxies when hosted on static GitHub Pages.
+ */
+async function defaultStaticAwareYahooFetcher(url: string) {
+  try {
+    const res = await globalThis.fetch(url);
+    const contentType = res.headers?.get?.('content-type') ?? '';
+    if (res.ok && !contentType.includes('text/html')) {
+      return res;
+    }
+  } catch {
+    // Ignore local /api/yahoo error and try static-host CORS proxy fallback
+  }
+
+  if (url.startsWith('/api/yahoo/')) {
+    const targetPath = url.replace(/^\/api\/yahoo/, '');
+    const yahooUrl = `https://query1.finance.yahoo.com${targetPath}`;
+    const proxyUrls = [
+      `https://corsproxy.io/?url=${encodeURIComponent(yahooUrl)}`,
+      `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`,
+    ];
+    for (const proxyUrl of proxyUrls) {
+      try {
+        const proxyRes = await globalThis.fetch(proxyUrl);
+        if (proxyRes.ok) {
+          return proxyRes;
+        }
+      } catch {
+        // Try next proxy
+      }
+    }
+  }
+
+  return globalThis.fetch(url);
+}
+
+/**
  * Zero-API-key Yahoo Finance v8/v1 adapter implementing MarketDataProvider.
  * Uses `/api/yahoo` proxy by default in browser builds or direct Yahoo URL in Node/tests.
  */
@@ -110,7 +147,7 @@ export class YahooFinanceProvider implements MarketDataProvider {
   >();
 
   constructor(fetcher?: HttpFetcher, baseUrl = '/api/yahoo') {
-    this.fetcher = fetcher ?? ((url: string) => globalThis.fetch(url));
+    this.fetcher = fetcher ?? defaultStaticAwareYahooFetcher;
     this.baseUrl = baseUrl.replace(/\/+$/, '');
   }
 

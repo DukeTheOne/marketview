@@ -118,6 +118,7 @@ function yahooFinanceApiPlugin(): Plugin {
 }
 
 export default defineConfig({
+  base: process.env.VITE_BASE_PATH || '/',
   plugins: [react(), tailwindcss(), yahooFinanceApiPlugin()],
   build: {
     rollupOptions: {

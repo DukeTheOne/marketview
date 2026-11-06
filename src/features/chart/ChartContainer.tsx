@@ -16,16 +16,15 @@ import {
   calculateEMA,
   calculateSMA,
   calculateVWAP,
-  computeAutoCandlesLod,
-  computeAutoIntradayLod,
   computeChartIndicatorsSummary,
   findNearestHoverPoint,
+  normalizeExclusiveChartStyle,
+  toggleExclusiveChartStyle,
   type IndicatorId,
   type ProjectedHoverPoint,
 } from '../../core/indicators/technicalIndicators';
 import type { LogicalAnchor } from '../../core/schemas/annotation';
 import {
-  TIMEFRAME_FOCUS_DAYS,
   computeTimeframeFocusWindow,
   type OHLCVCandle,
   type Timeframe,
@@ -40,7 +39,6 @@ import type {
 const DEFAULT_ACTIVE_INDICATORS: IndicatorId[] = [
   'CANDLES',
   'VOLUME',
-  'PRICE_15M',
 ];
 
 export interface ChartContainerProps {
@@ -87,34 +85,10 @@ export function ChartContainer({
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [hoverCursorX, setHoverCursorX] = useState<number | null>(null);
 
-  // Initialize active indicators:
-  // - Auto-LOD defaults PRICE_15M to ON for < 3M horizons (< 90 days) and OFF for >= 3M
-  // - Auto-LOD defaults CANDLES to OFF for < 1M horizons (< 30 days) and ON for >= 1M
-  const [activeIndicators, setActiveIndicators] = useState<IndicatorId[]>(() => {
-    const isUnder3M = TIMEFRAME_FOCUS_DAYS[timeframe] < 90;
-    const isAtLeast1M = TIMEFRAME_FOCUS_DAYS[timeframe] >= 30;
-    let initial = [...defaultIndicators];
-    if (isUnder3M) {
-      if (!initial.includes('PRICE_15M')) initial.push('PRICE_15M');
-    } else {
-      initial = initial.filter((id) => id !== 'PRICE_15M');
-    }
-    if (isAtLeast1M) {
-      if (!initial.includes('CANDLES')) initial.push('CANDLES');
-    } else {
-      initial = initial.filter((id) => id !== 'CANDLES');
-    }
-    return initial;
-  });
-
-  const lastAutoPriceLodStateRef = useRef<boolean>(
-    TIMEFRAME_FOCUS_DAYS[timeframe] < 90
-  );
-  const lastAutoCandlesLodStateRef = useRef<boolean>(
-    TIMEFRAME_FOCUS_DAYS[timeframe] >= 30
-  );
-  const lastTimeframeKeyRef = useRef<string>(
-    `${ticker}:${timeframe}:${focusRevision}`
+  // Initialize active indicators with strictly exclusive primary chart style (CANDLES vs PRICE_15M),
+  // defaulting to CANDLES while preserving user preference overrides.
+  const [activeIndicators, setActiveIndicators] = useState<IndicatorId[]>(() =>
+    normalizeExclusiveChartStyle(defaultIndicators)
   );
 
   const sortedCandles = useMemo(
@@ -132,94 +106,15 @@ export function ChartContainer({
     [sortedCandles, intradayCandles]
   );
 
-  // Smart Auto-Sync: When the user switches ticker/timeframe or clicks focusRevision,
-  // sync PRICE_15M (< 3M -> ON, >= 3M -> OFF) and CANDLES (>= 1M -> ON, < 1M -> OFF)
-  const timeframeKey = `${ticker}:${timeframe}:${focusRevision}`;
-  useEffect(() => {
-    if (timeframeKey !== lastTimeframeKeyRef.current) {
-      lastTimeframeKeyRef.current = timeframeKey;
-      const shouldShowPrice = TIMEFRAME_FOCUS_DAYS[timeframe] < 90;
-      const shouldShowCandles = TIMEFRAME_FOCUS_DAYS[timeframe] >= 30;
-      lastAutoPriceLodStateRef.current = shouldShowPrice;
-      lastAutoCandlesLodStateRef.current = shouldShowCandles;
-      setActiveIndicators((prev) => {
-        let updated = [...prev];
-        if (shouldShowPrice) {
-          if (!updated.includes('PRICE_15M')) updated.push('PRICE_15M');
-        } else {
-          updated = updated.filter((id) => id !== 'PRICE_15M');
-        }
-        if (shouldShowCandles) {
-          if (!updated.includes('CANDLES')) updated.push('CANDLES');
-        } else {
-          updated = updated.filter((id) => id !== 'CANDLES');
-        }
-        return updated;
-      });
-    }
-  }, [timeframeKey, timeframe]);
-
-  // Smart Auto-Sync: When the user zooms/pans across the LOD boundaries,
-  // automatically update PRICE_15M (< 3M) and CANDLES (>= 1M)
-  useEffect(() => {
-    const chart = chartApiRef.current;
-    if (!chart || sortedCandles.length < 2) {
-      return;
-    }
-    const logicalRange = chart.timeScale().getVisibleLogicalRange();
-    if (!logicalRange) {
-      return;
-    }
-    const shouldShowPriceByLod = computeAutoIntradayLod(
-      sortedCandles,
-      logicalRange,
-      timeframe
-    );
-    const shouldShowCandlesByLod = computeAutoCandlesLod(
-      sortedCandles,
-      logicalRange,
-      timeframe
-    );
-
-    const priceChanged =
-      lastAutoPriceLodStateRef.current !== null &&
-      lastAutoPriceLodStateRef.current !== shouldShowPriceByLod;
-    const candlesChanged =
-      lastAutoCandlesLodStateRef.current !== null &&
-      lastAutoCandlesLodStateRef.current !== shouldShowCandlesByLod;
-
-    if (priceChanged || candlesChanged) {
-      if (priceChanged) {
-        lastAutoPriceLodStateRef.current = shouldShowPriceByLod;
-      }
-      if (candlesChanged) {
-        lastAutoCandlesLodStateRef.current = shouldShowCandlesByLod;
-      }
-      setActiveIndicators((prev) => {
-        let updated = [...prev];
-        if (priceChanged) {
-          updated = shouldShowPriceByLod
-            ? updated.includes('PRICE_15M')
-              ? updated
-              : [...updated, 'PRICE_15M']
-            : updated.filter((id) => id !== 'PRICE_15M');
-        }
-        if (candlesChanged) {
-          updated = shouldShowCandlesByLod
-            ? updated.includes('CANDLES')
-              ? updated
-              : [...updated, 'CANDLES']
-            : updated.filter((id) => id !== 'CANDLES');
-        }
-        return updated;
-      });
-    }
-  }, [viewportRevision, sortedCandles, timeframe]);
-
   const handleToggleIndicator = (id: IndicatorId) => {
-    setActiveIndicators((prev) =>
-      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
-    );
+    setActiveIndicators((prev) => {
+      if (id === 'CANDLES' || id === 'PRICE_15M') {
+        return toggleExclusiveChartStyle(prev);
+      }
+      return prev.includes(id)
+        ? prev.filter((item) => item !== id)
+        : [...prev, id];
+    });
   };
 
   useEffect(() => {

@@ -22,8 +22,14 @@ export const UserPreferencesSchema = z.object({
   pollIntervalSec: LivePollIntervalSchema.default(15),
   activeIndicators: z
     .array(IndicatorIdSchema)
-    .default(['CANDLES', 'VOLUME', 'PRICE_15M']),
+    .default(['CANDLES', 'VOLUME']),
   isSidebarCollapsed: z.boolean().default(false),
+  firebaseApiKey: z.string().default(''),
+  firebaseProjectId: z.string().default(''),
+  deletedIds: z.record(z.string(), z.number().int().positive()).default({}),
+  cloudSyncEmail: z.string().default(''),
+  cloudSyncUid: z.string().default(''),
+  lastCloudSyncTimestamp: z.number().int().positive().nullable().default(null),
 });
 
 export type UserPreferences = z.infer<typeof UserPreferencesSchema>;

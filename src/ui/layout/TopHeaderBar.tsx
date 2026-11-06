@@ -5,6 +5,8 @@ import {
   BellRing,
   BookOpen,
   ChevronDown,
+  Cloud,
+  CloudOff,
   Database,
   PanelLeftClose,
   PanelLeftOpen,
@@ -24,6 +26,18 @@ import {
   type ProviderMode,
 } from '../providers/ProviderSettingsPopover';
 import { KeyboardShortcutsPopover } from '../shortcuts/KeyboardShortcutsPopover';
+import {
+  CloudSyncPopover,
+  type EntityCounts,
+} from '../sync/CloudSyncPopover';
+import type {
+  CloudAuthSession,
+  FirebaseConfig,
+} from '../../core/sync/firebaseSync';
+import {
+  DEFAULT_USER_PREFERENCES,
+  type UserPreferences,
+} from '../../core/schemas/preferences';
 
 const TIMEFRAMES: readonly Timeframe[] = PRIMARY_TIMEFRAMES;
 
@@ -70,6 +84,25 @@ export interface TopHeaderBarProps {
   isSidebarCollapsed?: boolean;
   onToggleSidebar?: () => void;
 
+  // Milestone 12: Zero-Cost Cloud Sync & Vault
+  showSync?: boolean;
+  cloudAuthSession?: CloudAuthSession | null;
+  isSyncing?: boolean;
+  cloudSyncError?: string | null;
+  workspaceBytes?: number;
+  entityCounts?: EntityCounts;
+  userPreferences?: UserPreferences;
+  initialSyncOpen?: boolean;
+  onSignInCloud?: (email: string, pass: string, config: FirebaseConfig) => Promise<void>;
+  onSignUpCloud?: (email: string, pass: string, config: FirebaseConfig) => Promise<void>;
+  onSignInWithGoogle?: (config: FirebaseConfig) => Promise<void>;
+  onSignOutCloud?: () => void;
+  onSyncNow?: () => Promise<void>;
+  onDeleteCloudVault?: () => Promise<void>;
+  onExportLocalJson?: () => void;
+  onImportLocalJson?: (file: File) => Promise<void>;
+  onUpdateFirebaseConfig?: (config: FirebaseConfig) => void;
+
   // Popover initial states (optional, for testing or pre-opened states)
   initialAlertsOpen?: boolean;
   initialProviderSettingsOpen?: boolean;
@@ -90,6 +123,23 @@ export function TopHeaderBar({
   showJournal = true,
   showAlerts = true,
   showLivePollToggle = true,
+  showSync = true,
+  cloudAuthSession = null,
+  isSyncing = false,
+  cloudSyncError = null,
+  workspaceBytes = 0,
+  entityCounts,
+  userPreferences,
+  initialSyncOpen = false,
+  onSignInCloud,
+  onSignUpCloud,
+  onSignInWithGoogle,
+  onSignOutCloud,
+  onSyncNow,
+  onDeleteCloudVault,
+  onExportLocalJson,
+  onImportLocalJson,
+  onUpdateFirebaseConfig,
   alerts = [],
   lastTriggeredAlertIds = [],
   onCreateAlert,
@@ -114,10 +164,14 @@ export function TopHeaderBar({
     initialProviderSettingsOpen
   );
   const [isShortcutsOpen, setIsShortcutsOpen] = useState(initialShortcutsOpen);
+  const [isSyncOpen, setIsSyncOpen] = useState(initialSyncOpen);
   const isPositive = (quote?.change ?? 0) >= 0;
 
   const isAnyPopoverOpen =
-    (showAlerts && isAlertsOpen) || isProviderSettingsOpen || isShortcutsOpen;
+    (showAlerts && isAlertsOpen) ||
+    isProviderSettingsOpen ||
+    isShortcutsOpen ||
+    (showSync && isSyncOpen);
 
   const activeAlertCount = alerts.filter((a) => a.status === 'ACTIVE').length;
   const hasTriggered = showAlerts && lastTriggeredAlertIds.length > 0;
@@ -136,6 +190,7 @@ export function TopHeaderBar({
             setIsAlertsOpen(false);
             setIsProviderSettingsOpen(false);
             setIsShortcutsOpen(false);
+            setIsSyncOpen(false);
           }}
         />
       )}
@@ -178,25 +233,20 @@ export function TopHeaderBar({
               {activeTicker}
             </span>
             {quote ? (
-              <>
+              <div className="flex items-baseline gap-2">
                 <span className="font-mono text-base font-semibold text-slate-100">
                   ${quote.price.toFixed(2)}
                 </span>
                 <span
-                  className={`rounded px-1.5 py-0.5 font-mono text-xs font-medium ${
-                    isPositive
-                      ? 'bg-emerald-500/15 text-emerald-400'
-                      : 'bg-rose-500/15 text-rose-400'
+                  className={`font-mono text-xs font-semibold ${
+                    isPositive ? 'text-emerald-400' : 'text-rose-400'
                   }`}
                 >
                   {isPositive ? '+' : ''}
                   {quote.change.toFixed(2)} ({isPositive ? '+' : ''}
                   {quote.changePercent.toFixed(2)}%)
                 </span>
-                <span className="hidden font-mono text-xs text-slate-400 md:inline">
-                  H: ${quote.high.toFixed(2)} · L: ${quote.low.toFixed(2)}
-                </span>
-              </>
+              </div>
             ) : (
               <span className="text-xs text-slate-500">Loading quote...</span>
             )}
@@ -256,6 +306,7 @@ export function TopHeaderBar({
                   setIsAlertsOpen((prev) => !prev);
                   setIsProviderSettingsOpen(false);
                   setIsShortcutsOpen(false);
+                  setIsSyncOpen(false);
                 }}
                 className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
                   isAlertsOpen
@@ -340,6 +391,7 @@ export function TopHeaderBar({
                 setIsProviderSettingsOpen((prev) => !prev);
                 setIsAlertsOpen(false);
                 setIsShortcutsOpen(false);
+                setIsSyncOpen(false);
               }}
               title="Configure Market Data Source & Live Polling"
               className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition ${
@@ -380,6 +432,74 @@ export function TopHeaderBar({
             />
           </button>
 
+          {/* Milestone 12: Cloud Sync Button & Popover */}
+          {showSync && (
+            <div className="relative z-50">
+              <button
+                type="button"
+                data-testid="cloud-sync-btn"
+                onClick={() => {
+                  setIsSyncOpen((prev) => !prev);
+                  setIsAlertsOpen(false);
+                  setIsProviderSettingsOpen(false);
+                  setIsShortcutsOpen(false);
+                }}
+                title={
+                  cloudAuthSession
+                    ? `Cloud Vault Connected (${cloudAuthSession.email})`
+                    : 'Cloud Sync & Vault (Guest Mode)'
+                }
+                className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
+                  isSyncOpen
+                    ? 'border-emerald-500 bg-emerald-500/15 text-emerald-300'
+                    : cloudAuthSession
+                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
+                    : 'border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                }`}
+              >
+                {isSyncing ? (
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin text-emerald-400" />
+                ) : cloudAuthSession ? (
+                  <Cloud className="h-3.5 w-3.5 text-emerald-400" />
+                ) : (
+                  <CloudOff className="h-3.5 w-3.5 text-slate-500" />
+                )}
+                <span className="hidden sm:inline">Sync</span>
+                {cloudAuthSession && (
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                )}
+              </button>
+
+              <CloudSyncPopover
+                isOpen={isSyncOpen}
+                onClose={() => setIsSyncOpen(false)}
+                authSession={cloudAuthSession}
+                preferences={userPreferences ?? DEFAULT_USER_PREFERENCES}
+                currentWorkspaceBytes={workspaceBytes}
+                entityCounts={
+                  entityCounts ?? {
+                    watchlists: 0,
+                    annotations: 0,
+                    trades: 0,
+                    alerts: 0,
+                    tombstones: 0,
+                  }
+                }
+                isSyncing={isSyncing}
+                syncError={cloudSyncError}
+                onSignIn={onSignInCloud ?? (async () => {})}
+                onSignUp={onSignUpCloud ?? (async () => {})}
+                onSignInWithGoogle={onSignInWithGoogle}
+                onSignOut={onSignOutCloud ?? (() => {})}
+                onSyncNow={onSyncNow ?? (async () => {})}
+                onDeleteCloudVault={onDeleteCloudVault ?? (async () => {})}
+                onExportLocalJson={onExportLocalJson ?? (() => {})}
+                onImportLocalJson={onImportLocalJson ?? (async () => {})}
+                onUpdateFirebaseConfig={onUpdateFirebaseConfig ?? (() => {})}
+              />
+            </div>
+          )}
+
           {/* Keyboard Shortcuts Help Button & Popover */}
           <div className="relative z-50">
             <button
@@ -389,6 +509,7 @@ export function TopHeaderBar({
                 setIsShortcutsOpen((prev) => !prev);
                 setIsAlertsOpen(false);
                 setIsProviderSettingsOpen(false);
+                setIsSyncOpen(false);
               }}
               title="Keyboard Shortcuts (?)"
               className={`flex h-8 w-8 items-center justify-center rounded-lg border font-mono text-xs font-bold transition ${

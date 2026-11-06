@@ -17,6 +17,55 @@ export const IndicatorIdSchema = z.enum([
 ]);
 export type IndicatorId = z.infer<typeof IndicatorIdSchema>;
 
+export type PrimaryChartStyle = 'CANDLES' | 'PRICE_15M';
+
+/**
+ * Determines which primary chart style ('CANDLES' or 'PRICE_15M') is active.
+ * Defaults to 'CANDLES' whenever 'CANDLES' is present or when neither is present.
+ */
+export function getActiveChartStyle(
+  activeIndicators: ReadonlyArray<IndicatorId>
+): PrimaryChartStyle {
+  if (
+    activeIndicators.includes('PRICE_15M') &&
+    !activeIndicators.includes('CANDLES')
+  ) {
+    return 'PRICE_15M';
+  }
+  return 'CANDLES';
+}
+
+/**
+ * Normalizes an indicator array so that exactly one of 'CANDLES' or 'PRICE_15M'
+ * is present (defaulting to 'CANDLES' if both or neither are passed), while
+ * preserving all other active overlay indicators (e.g. 'VOLUME', 'SMA_20').
+ */
+export function normalizeExclusiveChartStyle(
+  activeIndicators: ReadonlyArray<IndicatorId>
+): IndicatorId[] {
+  const style = getActiveChartStyle(activeIndicators);
+  const others = activeIndicators.filter(
+    (id) => id !== 'CANDLES' && id !== 'PRICE_15M'
+  );
+  return [style, ...others];
+}
+
+/**
+ * Toggles the primary chart style in an indicator array exclusively between
+ * 'CANDLES' and 'PRICE_15M', preserving all other active indicators.
+ */
+export function toggleExclusiveChartStyle(
+  activeIndicators: ReadonlyArray<IndicatorId>
+): IndicatorId[] {
+  const currentStyle = getActiveChartStyle(activeIndicators);
+  const nextStyle: PrimaryChartStyle =
+    currentStyle === 'CANDLES' ? 'PRICE_15M' : 'CANDLES';
+  const others = activeIndicators.filter(
+    (id) => id !== 'CANDLES' && id !== 'PRICE_15M'
+  );
+  return [nextStyle, ...others];
+}
+
 export const IndicatorPointSchema = z.object({
   timestamp: z.number().int().positive(),
   value: z.number().finite(),
