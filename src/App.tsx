@@ -57,13 +57,34 @@ function saveStoredAuthSession(session: CloudAuthSession | null) {
   }
 }
 
+function isStaticHostingWithoutBackend(): boolean {
+  if (typeof window === 'undefined') return false;
+  const hostname = window.location.hostname.toLowerCase();
+  return (
+    hostname.endsWith('github.io') ||
+    hostname.endsWith('pages.dev') ||
+    hostname.endsWith('gitlab.io')
+  );
+}
+
 function createConfiguredProvider(
   mode: ProviderMode,
   finnhubKey: string
 ): MarketDataProvider {
   const demoFallback = new DeterministicDemoProvider();
+  const onStaticHost = isStaticHostingWithoutBackend();
+
+  // On static hosting (e.g. GitHub Pages), avoid triggering 404 console errors for /api/yahoo/*
+  const yahooFetcher = onStaticHost
+    ? async () => {
+        throw new Error(
+          'GitHub Pages is a static host without a /api/yahoo backend proxy. Enter a free Finnhub API key in Settings.'
+        );
+      }
+    : undefined;
+
   const yahooWithFallback = new ResilientMarketDataProvider(
-    new YahooFinanceProvider(),
+    new YahooFinanceProvider(yahooFetcher),
     demoFallback
   );
 
@@ -338,6 +359,9 @@ export function App() {
     void marketStore.getState().setProvider(nextProvider);
     setFocusRevision((rev) => rev + 1);
 
+    const currentTickers = activeWatchlist?.tickers ?? [activeTicker];
+    void marketStore.getState().refreshQuotes(currentTickers);
+
     if (authSession) {
       setTimeout(() => void handleSyncNow(), 300);
     }
@@ -352,6 +376,14 @@ export function App() {
     () => annotations.filter((a) => a.ticker === activeTicker),
     [annotations, activeTicker]
   );
+
+  const annotationsCountByTicker = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const ann of annotations) {
+      counts[ann.ticker] = (counts[ann.ticker] ?? 0) + 1;
+    }
+    return counts;
+  }, [annotations]);
 
   // Cloud Sync Snapshot & Quota Stats
   const currentSnapshot: WorkspaceBackup = useMemo(
@@ -489,11 +521,12 @@ export function App() {
           if (syncedPrefs.activeTimeframe && syncedPrefs.activeTimeframe !== activeTimeframe) {
             await marketStore.getState().setActiveTimeframe(syncedPrefs.activeTimeframe);
           }
-          setFocusRevision((rev) => rev + 1);
         }
       } else {
         finalToPush = garbageCollectWorkspace(local);
       }
+
+      setFocusRevision((rev) => rev + 1);
 
       // 5. Push final merged payload to Firestore
       const res = await client.pushWorkspace(currentSession, finalToPush);
@@ -733,6 +766,7 @@ export function App() {
               .getState()
               .updatePreferences({ activeTicker: ticker });
           }}
+          annotationsCountByTicker={annotationsCountByTicker}
         />
 
         <ChartContainer
@@ -748,7 +782,7 @@ export function App() {
               <ChartToolbar
                 activeTool={activeTool}
                 annotationCount={activeTickerAnnotations.length}
-                showAdvancedTools={false}
+                showAdvancedTools={true}
                 onSelectTool={(tool) => {
                   annotationStore.getState().setActiveTool(tool);
                 }}

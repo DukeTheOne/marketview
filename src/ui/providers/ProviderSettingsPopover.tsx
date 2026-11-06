@@ -133,7 +133,7 @@ export function ProviderSettingsPopover({
           <p className="mt-1 text-[11px] text-slate-400 leading-relaxed">
             Real-world US equity quotes &amp; OHLCV candles via{' '}
             <code className="font-mono text-slate-300">/api/yahoo</code> with
-            automatic offline fallback.
+            automatic offline fallback. Requires local dev server or Vercel proxy.
           </p>
         </button>
 
@@ -155,7 +155,7 @@ export function ProviderSettingsPopover({
               <div className="flex items-center gap-2">
                 <KeyRound className="h-4 w-4 text-amber-400" />
                 <span className="text-xs font-bold">
-                  Finnhub REST API (Live Key + Yahoo Candle Hybrid)
+                  Finnhub REST API (Recommended for GitHub Pages)
                 </span>
               </div>
               {providerMode === 'finnhub' && (
@@ -163,8 +163,18 @@ export function ProviderSettingsPopover({
               )}
             </div>
             <p className="mt-1 text-[11px] text-slate-400 leading-relaxed">
-              Direct Finnhub real-time quote endpoint paired with live candle
-              history.
+              Direct browser CORS support — works instantly on static GitHub Pages.
+              Get a free API key at{' '}
+              <a
+                href="https://finnhub.io/register"
+                target="_blank"
+                rel="noreferrer"
+                className="underline text-emerald-400 hover:text-emerald-300"
+                onClick={(e) => e.stopPropagation()}
+              >
+                finnhub.io
+              </a>{' '}
+              (60 requests/min, free forever).
             </p>
           </button>
 
@@ -172,7 +182,7 @@ export function ProviderSettingsPopover({
             <input
               type="password"
               data-testid="finnhub-api-key-input"
-              placeholder="Enter Finnhub API key..."
+              placeholder="Enter free Finnhub API key..."
               value={keyInput}
               onChange={(e) => setKeyInput(e.target.value)}
               className="flex-1 rounded-lg border border-slate-800 bg-slate-950 px-2.5 py-1.5 font-mono text-xs text-white placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"

@@ -109,69 +109,35 @@ async function fetchWithTimeout(url: string, timeoutMs = 2000): Promise<Response
 }
 
 /**
- * Default Yahoo fetcher that tries `/api/yahoo/*` first (Vite dev / Vercel / Node server),
- * and automatically falls back to CORS proxies (allorigins, codetabs, corsproxy) when hosted on static GitHub Pages.
+ * Default Yahoo fetcher that queries `/api/yahoo/*` (Vite dev proxy / Vercel serverless / Node).
+ * If the endpoint is not available or returns an error (such as 404 or HTML fallback on static hosting),
+ * it disables the local proxy path and fails fast so resilient fallbacks can activate without hanging.
  */
 async function defaultStaticAwareYahooFetcher(url: string) {
-  if (!localProxyDisabled) {
-    try {
-      const res = await fetchWithTimeout(url, 1500);
-      const contentType = res.headers?.get?.('content-type') ?? '';
-      if (res.ok && !contentType.includes('text/html')) {
-        return res;
-      }
-      if (url.startsWith('/api/yahoo/')) {
-        localProxyDisabled = true;
-      }
-    } catch {
-      if (url.startsWith('/api/yahoo/')) {
-        localProxyDisabled = true;
-      }
-    }
+  if (localProxyDisabled && url.startsWith('/api/yahoo/')) {
+    throw new Error('Yahoo Finance local proxy (/api/yahoo) is disabled or unavailable.');
   }
 
-  if (url.startsWith('/api/yahoo/')) {
-    const targetPath = url.replace(/^\/api\/yahoo/, '');
-    const yahooUrl = `https://query1.finance.yahoo.com${targetPath}`;
-    const proxies = [
-      {
-        url: `https://api.allorigins.win/get?url=${encodeURIComponent(yahooUrl)}`,
-        isAllOrigins: true,
-      },
-      {
-        url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(yahooUrl)}`,
-        isAllOrigins: false,
-      },
-    ];
-
-    for (const proxy of proxies) {
-      try {
-        const proxyRes = await fetchWithTimeout(proxy.url, 2000);
-        if (proxyRes.ok) {
-          if (proxy.isAllOrigins) {
-            const raw = (await proxyRes.json()) as { contents?: string };
-            if (raw.contents) {
-              const unwrapped =
-                typeof raw.contents === 'string'
-                  ? JSON.parse(raw.contents)
-                  : raw.contents;
-              return {
-                ok: true,
-                status: 200,
-                json: async () => unwrapped,
-              };
-            }
-          } else {
-            return proxyRes;
-          }
-        }
-      } catch {
-        // Try next proxy or fail fast
-      }
+  try {
+    const res = await fetchWithTimeout(url, 2000);
+    const contentType = res.headers?.get?.('content-type') ?? '';
+    if (res.ok && !contentType.includes('text/html')) {
+      return res;
     }
+    if (url.startsWith('/api/yahoo/')) {
+      localProxyDisabled = true;
+    }
+    throw new Error(
+      `Yahoo proxy request failed with HTTP ${res.status}${
+        contentType.includes('text/html') ? ' (HTML response received)' : ''
+      }`
+    );
+  } catch (err) {
+    if (url.startsWith('/api/yahoo/')) {
+      localProxyDisabled = true;
+    }
+    throw err;
   }
-
-  return globalThis.fetch(url);
 }
 
 /**

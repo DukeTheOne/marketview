@@ -26,6 +26,7 @@ export interface WatchlistSidebarProps {
   searchResults?: TickerSearchResult[];
   onSearchTickers?: (query: string) => Promise<TickerSearchResult[]>;
   isCollapsed?: boolean;
+  annotationsCountByTicker?: Record<string, number>;
 }
 
 export function WatchlistSidebar({
@@ -43,6 +44,7 @@ export function WatchlistSidebar({
   searchResults,
   onSearchTickers,
   isCollapsed = false,
+  annotationsCountByTicker,
 }: WatchlistSidebarProps) {
   const [tickerInput, setTickerInput] = useState('');
   const [internalSearchResults, setInternalSearchResults] = useState<
@@ -385,6 +387,18 @@ export function WatchlistSidebar({
                   {isSelected && (
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
                   )}
+                  {annotationsCountByTicker &&
+                    (annotationsCountByTicker[ticker] ?? 0) > 0 && (
+                      <span
+                        title={`${annotationsCountByTicker[ticker]} chart drawing${
+                          annotationsCountByTicker[ticker] === 1 ? '' : 's'
+                        } on ${ticker}`}
+                        className="flex items-center gap-1 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-400 ring-1 ring-sky-500/30"
+                      >
+                        <Pencil className="h-2.5 w-2.5" />
+                        <span>{annotationsCountByTicker[ticker]}</span>
+                      </span>
+                    )}
                 </div>
                 <span className="font-mono text-[11px] text-slate-500">
                   {quote

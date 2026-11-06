@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import {
   Activity,
+  AlertTriangle,
   Bell,
   BellRing,
   BookOpen,
@@ -404,6 +405,11 @@ export function TopHeaderBar({
             >
               <Database className="h-3.5 w-3.5 text-emerald-400" />
               <span className="font-mono">{providerId}</span>
+              {providerId === 'deterministic-demo' && (
+                <span className="rounded bg-amber-500/20 px-1 py-0.2 font-mono text-[9px] font-semibold text-amber-300 ring-1 ring-amber-500/30">
+                  DEMO
+                </span>
+              )}
               <ChevronDown className="h-3 w-3 text-slate-500" />
             </button>
 
@@ -420,6 +426,23 @@ export function TopHeaderBar({
               onChangePollInterval={onChangePollInterval ?? (() => {})}
             />
           </div>
+
+          {providerId === 'deterministic-demo' && (
+            <button
+              type="button"
+              onClick={() => {
+                setIsProviderSettingsOpen(true);
+                setIsAlertsOpen(false);
+                setIsShortcutsOpen(false);
+                setIsSyncOpen(false);
+              }}
+              title="Add a free Finnhub API key to stream live market quotes directly on GitHub Pages"
+              className="hidden lg:flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-xs font-semibold text-amber-300 hover:bg-amber-500/20 transition"
+            >
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
+              <span>Add Free API Key</span>
+            </button>
+          )}
 
           <button
             type="button"
