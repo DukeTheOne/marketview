@@ -66,6 +66,8 @@ function roundPrice(val: number): number {
   return Math.max(0.01, Math.round(val * 100) / 100);
 }
 
+const DEFAULT_TEST_ANCHOR = 1729728000;
+
 /**
  * Deterministic, zero-API-key market data provider that generates realistic,
  * reproducible OHLCV candles and quotes for any ticker symbol.
@@ -74,9 +76,19 @@ export class DeterministicDemoProvider implements MarketDataProvider {
   public readonly id = 'deterministic-demo';
   private readonly anchorTimestampSec: number;
 
-  constructor(anchorTimestampSec = 1729728000) {
-    // Fixed default anchor epoch so candlestick series are stable across renders & tests
-    this.anchorTimestampSec = anchorTimestampSec;
+  constructor(anchorTimestampSec?: number) {
+    if (anchorTimestampSec !== undefined) {
+      this.anchorTimestampSec = anchorTimestampSec;
+    } else if (
+      typeof process !== 'undefined' &&
+      process.env?.NODE_ENV === 'test'
+    ) {
+      // Fixed default anchor epoch in automated tests so candlestick series are stable across test assertions
+      this.anchorTimestampSec = DEFAULT_TEST_ANCHOR;
+    } else {
+      // In live browser usage, anchor candles to the current day so drawings and notes align accurately with today's timescale
+      this.anchorTimestampSec = Math.floor(Date.now() / 1000);
+    }
   }
 
   public async getQuote(rawTicker: string): Promise<TickerQuote> {

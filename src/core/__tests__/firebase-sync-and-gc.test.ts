@@ -305,6 +305,68 @@ describe('Milestone 12: Anti-Bombing Quotas, Garbage Collection & Multi-Device S
       expect(merged.preferences?.finnhubApiKey).toBe('my-local-secret-finnhub-key');
       expect(merged.preferences?.firebaseApiKey).toBe('firebase-key-local');
     });
+
+    it('adopts remote API keys and preferences when local client is a fresh default guest', () => {
+      const nowSec = baseTimestamp;
+      const localFreshDefault: WorkspaceBackup = {
+        version: 1,
+        exportedAt: nowSec + 1000, // Even if local exportedAt is newer
+        watchlists: [],
+        annotations: [],
+        trades: [],
+        alerts: [],
+        deletedIds: {},
+        preferences: {
+          activeTicker: 'AAPL',
+          activeTimeframe: '1D',
+          activeWatchlistId: 'wl-default',
+          providerMode: 'yahoo',
+          finnhubApiKey: '', // Fresh device has no key!
+          pollIntervalSec: 0,
+          activeIndicators: ['CANDLES', 'VOLUME'],
+          isSidebarCollapsed: false,
+          firebaseApiKey: '',
+          firebaseProjectId: '',
+          deletedIds: {},
+          cloudSyncEmail: '',
+          cloudSyncUid: '',
+          lastCloudSyncTimestamp: null,
+        },
+      };
+
+      const remoteCloudVault: WorkspaceBackup = {
+        version: 1,
+        exportedAt: nowSec,
+        watchlists: [],
+        annotations: [mockAnnotation('remote-ann-1')],
+        trades: [],
+        alerts: [],
+        deletedIds: {},
+        preferences: {
+          activeTicker: 'NVDA',
+          activeTimeframe: '1W',
+          activeWatchlistId: 'wl-tech',
+          providerMode: 'finnhub',
+          finnhubApiKey: 'remote-synced-finnhub-key',
+          pollIntervalSec: 15,
+          activeIndicators: ['CANDLES'],
+          isSidebarCollapsed: true,
+          firebaseApiKey: 'key-123',
+          firebaseProjectId: 'proj-123',
+          deletedIds: {},
+          cloudSyncEmail: 'user@example.com',
+          cloudSyncUid: 'uid-123',
+          lastCloudSyncTimestamp: nowSec,
+        },
+      };
+
+      const merged = mergeWorkspaceSnapshots(localFreshDefault, remoteCloudVault, nowSec + 1000);
+      expect(merged.annotations).toHaveLength(1);
+      expect(merged.preferences?.finnhubApiKey).toBe('remote-synced-finnhub-key');
+      expect(merged.preferences?.providerMode).toBe('finnhub');
+      expect(merged.preferences?.activeTicker).toBe('NVDA');
+      expect(merged.preferences?.isSidebarCollapsed).toBe(true);
+    });
   });
 
   describe('FirebaseSyncClient', () => {

@@ -329,6 +329,11 @@ export function App() {
     });
     const nextProvider = createConfiguredProvider(nextMode, resolvedKey);
     void marketStore.getState().setProvider(nextProvider);
+    setFocusRevision((rev) => rev + 1);
+
+    if (authSession) {
+      setTimeout(() => void handleSyncNow(), 300);
+    }
   };
 
   const seriesKey = getCandleSeriesKey(activeTicker, activeTimeframe);
@@ -462,6 +467,21 @@ export function App() {
             ...finalToPush.preferences,
             deletedIds: finalToPush.deletedIds,
           });
+
+          const syncedPrefs = preferencesStore.getState().preferences;
+          const restoredProvider = createConfiguredProvider(
+            syncedPrefs.providerMode,
+            syncedPrefs.finnhubApiKey
+          );
+          await marketStore.getState().setProvider(restoredProvider);
+
+          if (syncedPrefs.activeTicker) {
+            await marketStore.getState().setActiveTicker(syncedPrefs.activeTicker);
+          }
+          if (syncedPrefs.activeTimeframe) {
+            await marketStore.getState().setActiveTimeframe(syncedPrefs.activeTimeframe);
+          }
+          setFocusRevision((rev) => rev + 1);
         }
       } else {
         finalToPush = garbageCollectWorkspace(local);

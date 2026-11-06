@@ -269,24 +269,51 @@ export function mergeWorkspaceSnapshots(
     (al) => al.createdAt ?? 0
   );
 
-  // 3. Merge preferences: newer exportedAt wins, but preserve local API keys if remote is empty
+  // 3. Merge preferences: newer exportedAt wins, but preserve non-empty API keys and protect remote keys from being wiped by fresh client defaults
   let mergedPreferences = local.preferences;
   if (remote.preferences) {
-    if (!local.preferences || remote.exportedAt >= local.exportedAt) {
+    const localHasApiKey = Boolean(local.preferences?.finnhubApiKey?.trim());
+    const remoteHasApiKey = Boolean(remote.preferences.finnhubApiKey?.trim());
+    const isLocalFreshDefault =
+      !local.preferences ||
+      (!localHasApiKey &&
+        local.preferences.providerMode === 'yahoo' &&
+        !local.preferences.lastCloudSyncTimestamp);
+
+    if (
+      !local.preferences ||
+      isLocalFreshDefault ||
+      (!localHasApiKey && remoteHasApiKey) ||
+      remote.exportedAt >= local.exportedAt
+    ) {
       mergedPreferences = {
         ...remote.preferences,
         finnhubApiKey:
-          remote.preferences.finnhubApiKey ||
           local.preferences?.finnhubApiKey ||
+          remote.preferences.finnhubApiKey ||
           '',
         firebaseApiKey:
-          remote.preferences.firebaseApiKey ||
           local.preferences?.firebaseApiKey ||
+          remote.preferences.firebaseApiKey ||
           '',
         firebaseProjectId:
-          remote.preferences.firebaseProjectId ||
           local.preferences?.firebaseProjectId ||
+          remote.preferences.firebaseProjectId ||
           '',
+      };
+    } else {
+      mergedPreferences = {
+        ...local.preferences,
+        finnhubApiKey:
+          local.preferences.finnhubApiKey ||
+          remote.preferences.finnhubApiKey ||
+          '',
+        providerMode:
+          local.preferences.finnhubApiKey
+            ? local.preferences.providerMode
+            : remote.preferences.finnhubApiKey
+            ? remote.preferences.providerMode
+            : local.preferences.providerMode,
       };
     }
   }

@@ -98,7 +98,7 @@ function findLatestPositive(
 
 /**
  * Default Yahoo fetcher that tries `/api/yahoo/*` first (Vite dev / Vercel / Node server),
- * and automatically falls back to public CORS proxies when hosted on static GitHub Pages.
+ * and automatically falls back to CORS proxies (allorigins, codetabs, corsproxy) when hosted on static GitHub Pages.
  */
 async function defaultStaticAwareYahooFetcher(url: string) {
   try {
@@ -114,15 +114,41 @@ async function defaultStaticAwareYahooFetcher(url: string) {
   if (url.startsWith('/api/yahoo/')) {
     const targetPath = url.replace(/^\/api\/yahoo/, '');
     const yahooUrl = `https://query1.finance.yahoo.com${targetPath}`;
-    const proxyUrls = [
-      `https://corsproxy.io/?url=${encodeURIComponent(yahooUrl)}`,
-      `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`,
+    const proxies = [
+      {
+        url: `https://api.allorigins.win/get?url=${encodeURIComponent(yahooUrl)}`,
+        isAllOrigins: true,
+      },
+      {
+        url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(yahooUrl)}`,
+        isAllOrigins: false,
+      },
+      {
+        url: `https://corsproxy.io/?url=${encodeURIComponent(yahooUrl)}`,
+        isAllOrigins: false,
+      },
     ];
-    for (const proxyUrl of proxyUrls) {
+
+    for (const proxy of proxies) {
       try {
-        const proxyRes = await globalThis.fetch(proxyUrl);
+        const proxyRes = await globalThis.fetch(proxy.url);
         if (proxyRes.ok) {
-          return proxyRes;
+          if (proxy.isAllOrigins) {
+            const raw = (await proxyRes.json()) as { contents?: string };
+            if (raw.contents) {
+              const unwrapped =
+                typeof raw.contents === 'string'
+                  ? JSON.parse(raw.contents)
+                  : raw.contents;
+              return {
+                ok: true,
+                status: 200,
+                json: async () => unwrapped,
+              };
+            }
+          } else {
+            return proxyRes;
+          }
         }
       } catch {
         // Try next proxy
