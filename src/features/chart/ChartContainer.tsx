@@ -590,14 +590,53 @@ export function ChartContainer({
       if (!chart || !series) {
         return null;
       }
-      const x = chart
+      let x: number | null = chart
         .timeScale()
-        .timeToCoordinate(anchor.timestamp as UTCTimestamp);
+        .timeToCoordinate(anchor.timestamp as UTCTimestamp) as number | null;
       const y = series.priceToCoordinate(anchor.price);
-      if (x === null || y === null) {
+      if (y === null) {
         return null;
       }
-      return { x: Number(x), y: Number(y) };
+
+      // If exact timestamp didn't hit a bar in Lightweight Charts (e.g. off-hour click, weekend, or timeframe mismatch),
+      // smoothly interpolate or snap to nearest candle so drawing lines and annotations are ALWAYS visible:
+      if (x === null && sortedCandles.length > 0) {
+        const timeScale = chart.timeScale();
+        let leftCandle: OHLCVCandle | null = null;
+        let rightCandle: OHLCVCandle | null = null;
+
+        for (let i = 0; i < sortedCandles.length; i++) {
+          const c = sortedCandles[i]!;
+          if (c.timestamp <= anchor.timestamp) {
+            leftCandle = c;
+          } else {
+            rightCandle = c;
+            break;
+          }
+        }
+
+        if (leftCandle && rightCandle) {
+          const x1 = timeScale.timeToCoordinate(leftCandle.timestamp as UTCTimestamp);
+          const x2 = timeScale.timeToCoordinate(rightCandle.timestamp as UTCTimestamp);
+          if (x1 !== null && x2 !== null) {
+            const fraction =
+              (anchor.timestamp - leftCandle.timestamp) /
+              (rightCandle.timestamp - leftCandle.timestamp);
+            x = Number(x1) + fraction * (Number(x2) - Number(x1));
+          }
+        } else if (leftCandle) {
+          const coord = timeScale.timeToCoordinate(leftCandle.timestamp as UTCTimestamp);
+          x = coord !== null ? Number(coord) : null;
+        } else if (rightCandle) {
+          const coord = timeScale.timeToCoordinate(rightCandle.timestamp as UTCTimestamp);
+          x = coord !== null ? Number(coord) : null;
+        }
+      }
+
+      if (x === null) {
+        return null;
+      }
+      return { x, y: Number(y) };
     },
 
     screenToLogical(point: ScreenPoint): LogicalAnchor | null {

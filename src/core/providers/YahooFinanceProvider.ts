@@ -96,19 +96,38 @@ function findLatestPositive(
   return undefined;
 }
 
+let localProxyDisabled = false;
+
+async function fetchWithTimeout(url: string, timeoutMs = 2000): Promise<Response> {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await globalThis.fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(id);
+  }
+}
+
 /**
  * Default Yahoo fetcher that tries `/api/yahoo/*` first (Vite dev / Vercel / Node server),
  * and automatically falls back to CORS proxies (allorigins, codetabs, corsproxy) when hosted on static GitHub Pages.
  */
 async function defaultStaticAwareYahooFetcher(url: string) {
-  try {
-    const res = await globalThis.fetch(url);
-    const contentType = res.headers?.get?.('content-type') ?? '';
-    if (res.ok && !contentType.includes('text/html')) {
-      return res;
+  if (!localProxyDisabled) {
+    try {
+      const res = await fetchWithTimeout(url, 1500);
+      const contentType = res.headers?.get?.('content-type') ?? '';
+      if (res.ok && !contentType.includes('text/html')) {
+        return res;
+      }
+      if (url.startsWith('/api/yahoo/')) {
+        localProxyDisabled = true;
+      }
+    } catch {
+      if (url.startsWith('/api/yahoo/')) {
+        localProxyDisabled = true;
+      }
     }
-  } catch {
-    // Ignore local /api/yahoo error and try static-host CORS proxy fallback
   }
 
   if (url.startsWith('/api/yahoo/')) {
@@ -123,15 +142,11 @@ async function defaultStaticAwareYahooFetcher(url: string) {
         url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(yahooUrl)}`,
         isAllOrigins: false,
       },
-      {
-        url: `https://corsproxy.io/?url=${encodeURIComponent(yahooUrl)}`,
-        isAllOrigins: false,
-      },
     ];
 
     for (const proxy of proxies) {
       try {
-        const proxyRes = await globalThis.fetch(proxy.url);
+        const proxyRes = await fetchWithTimeout(proxy.url, 2000);
         if (proxyRes.ok) {
           if (proxy.isAllOrigins) {
             const raw = (await proxyRes.json()) as { contents?: string };
@@ -151,7 +166,7 @@ async function defaultStaticAwareYahooFetcher(url: string) {
           }
         }
       } catch {
-        // Try next proxy
+        // Try next proxy or fail fast
       }
     }
   }

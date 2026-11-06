@@ -323,6 +323,13 @@ export function App() {
       nextFinnhubKey !== undefined
         ? nextFinnhubKey.trim()
         : savedPreferences.finnhubApiKey;
+
+    const changed =
+      nextMode !== savedPreferences.providerMode ||
+      resolvedKey !== savedPreferences.finnhubApiKey;
+
+    if (!changed) return;
+
     void preferencesStore.getState().updatePreferences({
       providerMode: nextMode,
       finnhubApiKey: resolvedKey,
@@ -341,16 +348,9 @@ export function App() {
   const activeIntradayCandles = intradayCandlesByTicker[activeTicker] ?? [];
   const activeQuote = quotesByTicker[activeTicker];
 
-  // Minimalist Mode: Only show Memo ('sticker') and Drawing ('trendline') annotations
-  const minimalistAnnotations = useMemo(
-    () =>
-      annotations.filter(
-        (a) => a.type === 'sticker' || a.type === 'trendline'
-      ),
-    [annotations]
-  );
-  const activeTickerAnnotations = minimalistAnnotations.filter(
-    (a) => a.ticker === activeTicker
+  const activeTickerAnnotations = useMemo(
+    () => annotations.filter((a) => a.ticker === activeTicker),
+    [annotations, activeTicker]
   );
 
   // Cloud Sync Snapshot & Quota Stats
@@ -469,16 +469,24 @@ export function App() {
           });
 
           const syncedPrefs = preferencesStore.getState().preferences;
-          const restoredProvider = createConfiguredProvider(
-            syncedPrefs.providerMode,
-            syncedPrefs.finnhubApiKey
-          );
-          await marketStore.getState().setProvider(restoredProvider);
+          const currentMode = savedPreferences.providerMode;
+          const currentKey = savedPreferences.finnhubApiKey;
 
-          if (syncedPrefs.activeTicker) {
+          if (
+            syncedPrefs.providerMode !== currentMode ||
+            syncedPrefs.finnhubApiKey !== currentKey
+          ) {
+            const restoredProvider = createConfiguredProvider(
+              syncedPrefs.providerMode,
+              syncedPrefs.finnhubApiKey
+            );
+            await marketStore.getState().setProvider(restoredProvider);
+          }
+
+          if (syncedPrefs.activeTicker && syncedPrefs.activeTicker !== activeTicker) {
             await marketStore.getState().setActiveTicker(syncedPrefs.activeTicker);
           }
-          if (syncedPrefs.activeTimeframe) {
+          if (syncedPrefs.activeTimeframe && syncedPrefs.activeTimeframe !== activeTimeframe) {
             await marketStore.getState().setActiveTimeframe(syncedPrefs.activeTimeframe);
           }
           setFocusRevision((rev) => rev + 1);
@@ -747,7 +755,7 @@ export function App() {
               />
               <OverlayCanvas
                 hostContext={hostContext}
-                annotations={minimalistAnnotations}
+                annotations={annotations}
                 activeTool={activeTool}
                 selectedAnnotationId={selectedAnnotationId}
                 onSelectTool={(tool) => {
