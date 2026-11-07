@@ -183,6 +183,9 @@ export function App() {
     watchlists.find((w) => w.id === activeWatchlistId) ?? watchlists[0];
 
   useEffect(() => {
+    if (isHydratedRef.current) return;
+    isHydratedRef.current = true;
+
     void (async () => {
       const [hydratedWatchlists, , hydratedPrefs] = await Promise.all([
         watchlistStore.getState().hydrate(),
@@ -223,8 +226,19 @@ export function App() {
       ];
       await marketStore.getState().refreshQuotes(initialTickers);
 
+      const initialBackup: WorkspaceBackup = {
+        version: 1,
+        exportedAt: Math.floor(Date.now() / 1000),
+        watchlists: hydratedWatchlists,
+        annotations: annotationStore.getState().annotations,
+        trades: [],
+        alerts: [],
+        deletedIds: hydratedPrefs.deletedIds ?? {},
+        preferences: hydratedPrefs,
+      };
+      lastSyncedHashRef.current = computeWorkspaceContentHash(initialBackup);
+
       setIsHydrated(true);
-      isHydratedRef.current = true;
       if (authSession) {
         setTimeout(() => void handleSyncNow(), 100);
       }
@@ -238,6 +252,24 @@ export function App() {
     initialEnvKey,
     authSession,
   ]);
+
+  // Visibility-Aware Live Stream Auto-Polling
+  useEffect(() => {
+    const intervalSec = savedPreferences.pollIntervalSec;
+    if (intervalSec <= 0) return;
+
+    const intervalId = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        void marketStore.getState().refreshActiveCandles();
+        const currentTickers = activeWatchlist?.tickers ?? [activeTicker];
+        if (currentTickers.length > 0) {
+          void marketStore.getState().refreshQuotes(currentTickers);
+        }
+      }
+    }, intervalSec * 1000);
+
+    return () => clearInterval(intervalId);
+  }, [savedPreferences.pollIntervalSec, marketStore, activeTicker, activeWatchlist]);
 
   // Minimalist Keyboard-First Workflow Shortcuts
   useEffect(() => {
@@ -789,7 +821,29 @@ export function App() {
           ...(cleaned.deletedIds ?? {}),
         },
       });
+
+      if (cleaned.preferences.activeTicker) {
+        await marketStore.getState().setActiveTicker(cleaned.preferences.activeTicker);
+      }
+      if (cleaned.preferences.activeTimeframe) {
+        await marketStore.getState().setActiveTimeframe(cleaned.preferences.activeTimeframe);
+      }
     }
+
+    const currentWatchlist =
+      watchlistStore.getState().watchlists.find(
+        (w) => w.id === watchlistStore.getState().activeWatchlistId
+      ) ?? watchlistStore.getState().watchlists[0];
+
+    const currentTickers = currentWatchlist?.tickers ?? [marketStore.getState().activeTicker];
+    if (currentTickers.length > 0) {
+      if (!currentTickers.includes(marketStore.getState().activeTicker) && currentTickers[0]) {
+        await marketStore.getState().setActiveTicker(currentTickers[0]);
+      }
+      await marketStore.getState().refreshQuotes(currentTickers);
+    }
+    await marketStore.getState().refreshActiveCandles();
+    setFocusRevision((rev) => rev + 1);
   };
 
   const syncStatus: CloudSyncStatus = useMemo(() => {
@@ -925,7 +979,7 @@ export function App() {
               <ChartToolbar
                 activeTool={activeTool}
                 annotationCount={activeTickerAnnotations.length}
-                showAdvancedTools={true}
+                showAdvancedTools={false}
                 onSelectTool={(tool) => {
                   annotationStore.getState().setActiveTool(tool);
                 }}

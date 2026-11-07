@@ -1,0 +1,18 @@
+diff --git a/src/core/__tests__/watchlist-store.test.ts b/src/core/__tests__/watchlist-store.test.ts
+index 3693b70..b4e334a 100644
+--- a/src/core/__tests__/watchlist-store.test.ts
++++ b/src/core/__tests__/watchlist-store.test.ts
+@@ -71,11 +71,11 @@ describe('Watchlist Headless Store & StorageRepository Persistence (TC-04)', ()
+     const delayedRepo: InMemoryStorageRepository = new InMemoryStorageRepository();
++    const originalSave = delayedRepo.saveWatchlists.bind(delayedRepo);
+     // Intercept saveWatchlists to delay completion
+     delayedRepo.saveWatchlists = async (watchlists) => {
+       saveCallCount++;
+       await new Promise<void>((resolve) => {
+         resolveSave = () => {
+-          delayedRepo.watchlists = [...watchlists];
+-          resolve();
++          originalSave(watchlists).then(resolve);
+         };
+       });
+     };

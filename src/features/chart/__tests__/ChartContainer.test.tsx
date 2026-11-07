@@ -203,4 +203,30 @@ describe('ChartContainer & Auto-Adaptive LOD Indicator', () => {
       expect(markup4).toMatch(/data-testid="indicator-toggle-CANDLES"[^>]*data-chart-style="CANDLES"/);
     });
   });
+
+  describe('Non-Blocking Loading Overlay', () => {
+    it('omits blocking loading overlay during background refresh when candles already exist', () => {
+      const markup = renderToStaticMarkup(
+        createElement(ChartContainer, {
+          ticker: 'AAPL',
+          timeframe: '1D',
+          candles: mockCandles,
+          isLoading: true,
+        })
+      );
+      expect(markup).not.toContain('Syncing AAPL (1D) OHLCV series...');
+    });
+
+    it('renders blocking loading overlay during initial cold load when candles array is empty', () => {
+      const markup = renderToStaticMarkup(
+        createElement(ChartContainer, {
+          ticker: 'AAPL',
+          timeframe: '1D',
+          candles: [],
+          isLoading: true,
+        })
+      );
+      expect(markup).toContain('Syncing AAPL (1D) OHLCV series...');
+    });
+  });
 });

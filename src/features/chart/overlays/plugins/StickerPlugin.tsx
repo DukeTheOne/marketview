@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import {
   StickerPayloadSchema,
+  type LogicalAnchor,
   type StickerColor,
   type StickerPayload,
 } from '../../../../core/schemas/annotation';
@@ -70,13 +71,39 @@ function StickerAnnotationComponent({
   onUpdate,
   onDelete,
 }: OverlayAnnotationRenderProps<StickerPayload>) {
-  const primaryAnchor = annotation.anchors[0];
+  const [dragAnchor, setDragAnchor] = useState<LogicalAnchor | null>(null);
+  const dragAnchorRef = useRef<LogicalAnchor | null>(null);
+  const dragStartPointRef = useRef<{ x: number; y: number } | null>(null);
+  const hasMovedRef = useRef<boolean>(false);
+  const primaryAnchor = dragAnchor ?? annotation.anchors[0];
   const screenPos = primaryAnchor ? projector.logicalToScreen(primaryAnchor) : null;
   const isDraggingRef = useRef(false);
   const [localText, setLocalText] = useState(payload.markdown);
 
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingMarkdownRef = useRef<string | null>(null);
+
+  const flushPendingMarkdown = () => {
+    if (pendingMarkdownRef.current !== null) {
+      onUpdate({ payload: { markdown: pendingMarkdownRef.current } });
+      pendingMarkdownRef.current = null;
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+    }
+  };
+
   useEffect(() => {
-    setLocalText(payload.markdown);
+    return () => {
+      flushPendingMarkdown();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (pendingMarkdownRef.current === null) {
+      setLocalText(payload.markdown);
+    }
   }, [payload.markdown]);
 
   if (!screenPos || !primaryAnchor) {
@@ -89,10 +116,32 @@ function StickerAnnotationComponent({
     e.stopPropagation();
     e.preventDefault();
     isDraggingRef.current = true;
+    hasMovedRef.current = false;
+    dragAnchorRef.current = null;
+    dragStartPointRef.current =
+      typeof e.clientX === 'number' && typeof e.clientY === 'number'
+        ? { x: e.clientX, y: e.clientY }
+        : null;
+    const initialAnchor = annotation.anchors[0] ?? primaryAnchor;
     onSelect();
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
       if (!isDraggingRef.current) return;
+
+      // Guard 1: Screen-space zero displacement (same clientX / clientY)
+      if (
+        dragStartPointRef.current !== null &&
+        moveEvent.clientX === dragStartPointRef.current.x &&
+        moveEvent.clientY === dragStartPointRef.current.y
+      ) {
+        if (hasMovedRef.current) {
+          hasMovedRef.current = false;
+          dragAnchorRef.current = null;
+          setDragAnchor(null);
+        }
+        return;
+      }
+
       const chartHost = document.querySelector('.overlay-canvas-root');
       if (!chartHost) return;
       const rect = chartHost.getBoundingClientRect();
@@ -101,15 +150,44 @@ function StickerAnnotationComponent({
         y: moveEvent.clientY - rect.top,
       };
       const logical = projector.screenToLogical(point);
-      if (logical) {
-        onUpdate({ anchors: [logical] });
+      if (!logical) return;
+
+      // Guard 2: Logical anchor displacement (same candle timestamp & price level)
+      if (
+        logical.timestamp === initialAnchor.timestamp &&
+        logical.price === initialAnchor.price
+      ) {
+        if (hasMovedRef.current) {
+          hasMovedRef.current = false;
+          dragAnchorRef.current = null;
+          setDragAnchor(null);
+        }
+        return;
       }
+
+      hasMovedRef.current = true;
+      dragAnchorRef.current = logical;
+      setDragAnchor(logical);
     };
 
     const handleMouseUp = () => {
       isDraggingRef.current = false;
+      dragStartPointRef.current = null;
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
+      if (hasMovedRef.current && dragAnchorRef.current) {
+        const baseAnchor = annotation.anchors[0];
+        const isUnchanged =
+          baseAnchor !== undefined &&
+          dragAnchorRef.current.timestamp === baseAnchor.timestamp &&
+          dragAnchorRef.current.price === baseAnchor.price;
+        if (!isUnchanged) {
+          onUpdate({ anchors: [dragAnchorRef.current] });
+        }
+      }
+      hasMovedRef.current = false;
+      dragAnchorRef.current = null;
+      setDragAnchor(null);
     };
 
     window.addEventListener('mousemove', handleMouseMove);
@@ -227,8 +305,18 @@ function StickerAnnotationComponent({
             <textarea
               value={localText}
               onChange={(e) => {
-                setLocalText(e.target.value);
-                onUpdate({ payload: { markdown: e.target.value } });
+                const val = e.target.value;
+                setLocalText(val);
+                pendingMarkdownRef.current = val;
+                if (debounceTimerRef.current) {
+                  clearTimeout(debounceTimerRef.current);
+                }
+                debounceTimerRef.current = setTimeout(() => {
+                  flushPendingMarkdown();
+                }, 250);
+              }}
+              onBlur={() => {
+                flushPendingMarkdown();
               }}
               placeholder="Write chart thesis or level analysis..."
               rows={3}

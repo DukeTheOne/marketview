@@ -426,8 +426,9 @@ describe('Milestone 12: Anti-Bombing Quotas, Garbage Collection & Multi-Device S
       const merged = mergeWorkspaceSnapshots(localInitialized, remoteCloudVault, nowSec + 200);
       // Remote domain entity was merged
       expect(merged.annotations).toHaveLength(1);
-      // Remote account preferences were updated
-      expect(merged.preferences?.activeIndicators).toEqual(['CANDLES', 'VOLUME']);
+      // Local activeIndicators and pollIntervalSec were preserved on initialized devices!
+      expect(merged.preferences?.activeIndicators).toEqual(['CANDLES']);
+      expect(merged.preferences?.pollIntervalSec).toBe(15);
       // Local ephemeral viewport navigation was preserved!
       expect(merged.preferences?.activeTicker).toBe('AAPL');
       expect(merged.preferences?.activeTimeframe).toBe('15m');
@@ -819,6 +820,47 @@ describe('Milestone 12: Anti-Bombing Quotas, Garbage Collection & Multi-Device S
       };
 
       expect(computeWorkspaceContentHash(snap1)).not.toBe(
+        computeWorkspaceContentHash(snap2)
+      );
+    });
+
+    it('computes identical content hash when activeIndicators or pollIntervalSec change (local view isolation)', () => {
+      const snap1: WorkspaceBackup = {
+        version: 1,
+        exportedAt: 1711900000,
+        watchlists: [mockWatchlist('wl-1')],
+        annotations: [mockAnnotation('ann-1')],
+        trades: [],
+        alerts: [],
+        deletedIds: {},
+        preferences: {
+          activeTicker: 'AAPL',
+          activeTimeframe: '1D',
+          activeWatchlistId: 'wl-1',
+          providerMode: 'demo',
+          finnhubApiKey: '',
+          pollIntervalSec: 15,
+          activeIndicators: ['CANDLES'],
+          isSidebarCollapsed: false,
+          firebaseApiKey: 'key-123',
+          firebaseProjectId: 'proj-123',
+          deletedIds: {},
+          cloudSyncEmail: 'user@example.com',
+          cloudSyncUid: 'uid-123',
+          lastCloudSyncTimestamp: 1711899999,
+        },
+      };
+
+      const snap2: WorkspaceBackup = {
+        ...snap1,
+        preferences: {
+          ...snap1.preferences!,
+          activeIndicators: ['PRICE_15M', 'SMA_20', 'EMA_50', 'BB_20', 'VWAP', 'RSI_14', 'VOLUME'],
+          pollIntervalSec: 300,
+        },
+      };
+
+      expect(computeWorkspaceContentHash(snap1)).toBe(
         computeWorkspaceContentHash(snap2)
       );
     });

@@ -1,4 +1,4 @@
-import { useRef, type MouseEvent as ReactMouseEvent } from 'react';
+import { useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
   ArrowRight,
   DollarSign,
@@ -58,19 +58,22 @@ function FibonacciAnnotationComponent({
   onUpdate,
   onDelete,
 }: OverlayAnnotationRenderProps<FibonacciPayload>) {
+  const [dragAnchors, setDragAnchors] = useState<[LogicalAnchor, LogicalAnchor] | null>(null);
+  const dragAnchorsRef = useRef<[LogicalAnchor, LogicalAnchor] | null>(null);
   const isDraggingHandleRef = useRef<number | null>(null);
   const isDraggingBodyRef = useRef<boolean>(false);
   const dragStartPointRef = useRef<{ x: number; y: number } | null>(null);
+  const hasMovedRef = useRef<boolean>(false);
 
-  const anchor1 = annotation.anchors[0];
-  const anchor2 = annotation.anchors[1];
+  const effectiveAnchor1 = dragAnchors ? dragAnchors[0] : annotation.anchors[0];
+  const effectiveAnchor2 = dragAnchors ? dragAnchors[1] : annotation.anchors[1];
 
-  if (!anchor1 || !anchor2) {
+  if (!effectiveAnchor1 || !effectiveAnchor2) {
     return null;
   }
 
-  const p1 = projector.logicalToScreen(anchor1);
-  const p2 = projector.logicalToScreen(anchor2);
+  const p1 = projector.logicalToScreen(effectiveAnchor1);
+  const p2 = projector.logicalToScreen(effectiveAnchor2);
 
   if (!p1 || !p2) {
     return null;
@@ -84,14 +87,14 @@ function FibonacciAnnotationComponent({
   const topY = Math.min(p1.y, p2.y);
 
   const computedLevels = calculateFibonacciLevels(
-    anchor1.price,
-    anchor2.price,
+    effectiveAnchor1.price,
+    effectiveAnchor2.price,
     payload.levels,
   );
 
   const projectedLevels = computedLevels.map((lvl) => {
     const screenPt = projector.logicalToScreen({
-      timestamp: anchor1.timestamp,
+      timestamp: effectiveAnchor1.timestamp,
       price: lvl.price,
     });
     const y = screenPt ? screenPt.y : p1.y + (p2.y - p1.y) * lvl.ratio;
@@ -104,11 +107,39 @@ function FibonacciAnnotationComponent({
   const handleStartDragHandle = (index: number, e: ReactMouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
+    const anchor0 = annotation.anchors[0];
+    const anchor1 = annotation.anchors[1];
+    if (!anchor0 || !anchor1) return;
+
+    const initialAnchor = index === 0 ? anchor0 : anchor1;
+
     isDraggingHandleRef.current = index;
+    if (e.clientX !== undefined && e.clientY !== undefined) {
+      dragStartPointRef.current = { x: e.clientX, y: e.clientY };
+    } else {
+      dragStartPointRef.current = null;
+    }
+    hasMovedRef.current = false;
+    dragAnchorsRef.current = null;
     onSelect();
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
       if (isDraggingHandleRef.current === null) return;
+
+      // 1. Screen-space return-to-origin check
+      if (
+        dragStartPointRef.current &&
+        moveEvent.clientX === dragStartPointRef.current.x &&
+        moveEvent.clientY === dragStartPointRef.current.y
+      ) {
+        if (hasMovedRef.current) {
+          hasMovedRef.current = false;
+          dragAnchorsRef.current = null;
+          setDragAnchors(null);
+        }
+        return;
+      }
+
       const chartHost = document.querySelector('.overlay-canvas-root');
       if (!chartHost) return;
       const rect = chartHost.getBoundingClientRect();
@@ -119,17 +150,49 @@ function FibonacciAnnotationComponent({
       const logical = projector.screenToLogical(point);
       if (!logical) return;
 
+      // 2. Logical-space return-to-origin check against canonical initial anchor
+      const isAnchorUnchanged =
+        logical.timestamp === initialAnchor.timestamp &&
+        logical.price === initialAnchor.price;
+
+      if (isAnchorUnchanged) {
+        if (hasMovedRef.current) {
+          hasMovedRef.current = false;
+          dragAnchorsRef.current = null;
+          setDragAnchors(null);
+        }
+        return;
+      }
+
+      // 3. Active displacement: buffer 60fps local drag state
+      hasMovedRef.current = true;
       const nextAnchors: [LogicalAnchor, LogicalAnchor] = [
-        isDraggingHandleRef.current === 0 ? logical : anchor1,
-        isDraggingHandleRef.current === 1 ? logical : anchor2,
+        isDraggingHandleRef.current === 0 ? logical : anchor0,
+        isDraggingHandleRef.current === 1 ? logical : anchor1,
       ];
-      onUpdate({ anchors: nextAnchors });
+      dragAnchorsRef.current = nextAnchors;
+      setDragAnchors(nextAnchors);
     };
 
     const handleMouseUp = () => {
       isDraggingHandleRef.current = null;
+      dragStartPointRef.current = null;
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
+      if (hasMovedRef.current && dragAnchorsRef.current) {
+        const [a1, a2] = dragAnchorsRef.current;
+        const isUnchanged =
+          a1.timestamp === anchor0.timestamp &&
+          a1.price === anchor0.price &&
+          a2.timestamp === anchor1.timestamp &&
+          a2.price === anchor1.price;
+        if (!isUnchanged) {
+          onUpdate({ anchors: dragAnchorsRef.current });
+        }
+      }
+      hasMovedRef.current = false;
+      dragAnchorsRef.current = null;
+      setDragAnchors(null);
     };
 
     window.addEventListener('mousemove', handleMouseMove);
@@ -139,17 +202,37 @@ function FibonacciAnnotationComponent({
   const handleStartDragBody = (e: ReactMouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
+    const anchor0 = annotation.anchors[0];
+    const anchor1 = annotation.anchors[1];
+    if (!anchor0 || !anchor1) return;
+
     isDraggingBodyRef.current = true;
-    dragStartPointRef.current = { x: e.clientX, y: e.clientY };
+    if (e.clientX !== undefined && e.clientY !== undefined) {
+      dragStartPointRef.current = { x: e.clientX, y: e.clientY };
+    } else {
+      dragStartPointRef.current = null;
+    }
+    hasMovedRef.current = false;
+    dragAnchorsRef.current = null;
     onSelect();
 
-    const initialP1 = { ...p1 };
-    const initialP2 = { ...p2 };
+    const initialP1 = projector.logicalToScreen(anchor0) ?? { ...p1 };
+    const initialP2 = projector.logicalToScreen(anchor1) ?? { ...p2 };
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
       if (!isDraggingBodyRef.current || !dragStartPointRef.current) return;
       const dx = moveEvent.clientX - dragStartPointRef.current.x;
       const dy = moveEvent.clientY - dragStartPointRef.current.y;
+
+      // 1. Screen-space zero displacement / return-to-origin check
+      if (dx === 0 && dy === 0) {
+        if (hasMovedRef.current) {
+          hasMovedRef.current = false;
+          dragAnchorsRef.current = null;
+          setDragAnchors(null);
+        }
+        return;
+      }
 
       const newL1 = projector.screenToLogical({
         x: initialP1.x + dx,
@@ -161,7 +244,27 @@ function FibonacciAnnotationComponent({
       });
 
       if (newL1 && newL2) {
-        onUpdate({ anchors: [newL1, newL2] });
+        const isUnchanged =
+          newL1.timestamp === anchor0.timestamp &&
+          newL1.price === anchor0.price &&
+          newL2.timestamp === anchor1.timestamp &&
+          newL2.price === anchor1.price;
+
+        // 2. Logical-space return-to-origin check
+        if (isUnchanged) {
+          if (hasMovedRef.current) {
+            hasMovedRef.current = false;
+            dragAnchorsRef.current = null;
+            setDragAnchors(null);
+          }
+          return;
+        }
+
+        // 3. Active displacement: buffer 60fps local drag state
+        hasMovedRef.current = true;
+        const nextAnchors: [LogicalAnchor, LogicalAnchor] = [newL1, newL2];
+        dragAnchorsRef.current = nextAnchors;
+        setDragAnchors(nextAnchors);
       }
     };
 
@@ -170,6 +273,21 @@ function FibonacciAnnotationComponent({
       dragStartPointRef.current = null;
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
+      // Defense-in-depth equality check before onUpdate commit
+      if (hasMovedRef.current && dragAnchorsRef.current) {
+        const [a1, a2] = dragAnchorsRef.current;
+        const isUnchanged =
+          a1.timestamp === anchor0.timestamp &&
+          a1.price === anchor0.price &&
+          a2.timestamp === anchor1.timestamp &&
+          a2.price === anchor1.price;
+        if (!isUnchanged) {
+          onUpdate({ anchors: dragAnchorsRef.current });
+        }
+      }
+      hasMovedRef.current = false;
+      dragAnchorsRef.current = null;
+      setDragAnchors(null);
     };
 
     window.addEventListener('mousemove', handleMouseMove);

@@ -187,6 +187,7 @@ describe('Tier 1: Feature Coverage (F1 to F9)', () => {
           activeTool: null,
           annotationCount: 0,
           onSelectTool: () => {},
+          showAdvancedTools: true,
         })
       );
       expect(html).toContain('Fib');
@@ -198,6 +199,7 @@ describe('Tier 1: Feature Coverage (F1 to F9)', () => {
           activeTool: null,
           annotationCount: 0,
           onSelectTool: () => {},
+          showAdvancedTools: true,
         })
       );
       expect(html).toContain('lucide-percent');
@@ -209,6 +211,7 @@ describe('Tier 1: Feature Coverage (F1 to F9)', () => {
           activeTool: 'fibonacci',
           annotationCount: 1,
           onSelectTool: () => {},
+          showAdvancedTools: true,
         })
       );
       expect(html).toContain('bg-purple-500');
@@ -221,6 +224,7 @@ describe('Tier 1: Feature Coverage (F1 to F9)', () => {
           activeTool: 'trendline',
           annotationCount: 1,
           onSelectTool: () => {},
+          showAdvancedTools: true,
         })
       );
       expect(html).toContain('text-slate-400 hover:text-purple-300');
@@ -232,6 +236,7 @@ describe('Tier 1: Feature Coverage (F1 to F9)', () => {
           activeTool: null,
           annotationCount: 0,
           onSelectTool: () => {},
+          showAdvancedTools: true,
         })
       );
       expect(html).toContain(
@@ -818,6 +823,7 @@ describe('Tier 2: Boundary & Corner Cases (F1 to F9)', () => {
             activeTool: tool,
             annotationCount: 2,
             onSelectTool: () => {},
+            showAdvancedTools: true,
           })
         );
         if (tool === 'fibonacci') {
@@ -834,6 +840,7 @@ describe('Tier 2: Boundary & Corner Cases (F1 to F9)', () => {
           activeTool: null,
           annotationCount: 0,
           onSelectTool: () => {},
+          showAdvancedTools: true,
         })
       );
       expect(html).toContain('Pointer');
@@ -1723,6 +1730,7 @@ describe('Tier 3: Cross-Feature Combinations (Pairwise Interactions)', () => {
         activeTool: tool,
         annotationCount: 0,
         onSelectTool: setTool,
+        showAdvancedTools: true,
       })
     );
     expect(tbHtml).toContain('bg-purple-500');

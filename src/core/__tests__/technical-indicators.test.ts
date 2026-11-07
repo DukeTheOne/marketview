@@ -8,7 +8,9 @@ import {
   calculateRSI,
   calculateSMA,
   calculateVWAP,
+  computeAllChartIndicators,
   computeChartIndicatorsSummary,
+  findSurroundingCandles,
   formatCompactVolume,
 } from '../indicators/technicalIndicators';
 import type { OHLCVCandle } from '../schemas/market';
@@ -300,6 +302,200 @@ describe('Technical Indicators Headless Engine', () => {
       expect(full.bb20!.lower).toBeLessThan(full.bb20!.middle);
       expect(full.latestVolume).toBe(1000);
       expect(full.latestPrice).toBe(129.5);
+    });
+  });
+
+  describe('findSurroundingCandles', () => {
+    it('returns nulls for empty array or non-finite timestamp', () => {
+      expect(findSurroundingCandles([], 100)).toEqual({
+        left: null,
+        right: null,
+      });
+      expect(findSurroundingCandles([makeCandle(0, 100)], Number.NaN)).toEqual({
+        left: null,
+        right: null,
+      });
+      expect(
+        findSurroundingCandles([makeCandle(0, 100)], Number.POSITIVE_INFINITY)
+      ).toEqual({
+        left: null,
+        right: null,
+      });
+    });
+
+    it('handles target timestamps before first candle and after last candle', () => {
+      const c0 = makeCandle(0, 100, { timestamp: 1000 });
+      const c1 = makeCandle(1, 105, { timestamp: 2000 });
+      const c2 = makeCandle(2, 110, { timestamp: 3000 });
+      const sorted = [c0, c1, c2];
+
+      // Before first candle: left is null, right is first candle
+      expect(findSurroundingCandles(sorted, 500)).toEqual({
+        left: null,
+        right: c0,
+      });
+
+      // After last candle: left is last candle, right is null
+      expect(findSurroundingCandles(sorted, 3500)).toEqual({
+        left: c2,
+        right: null,
+      });
+    });
+
+    it('handles exact matches returning the matched candle on both left and right', () => {
+      const c0 = makeCandle(0, 100, { timestamp: 1000 });
+      const c1 = makeCandle(1, 105, { timestamp: 2000 });
+      const c2 = makeCandle(2, 110, { timestamp: 3000 });
+      const sorted = [c0, c1, c2];
+
+      expect(findSurroundingCandles(sorted, 1000)).toEqual({
+        left: c0,
+        right: c0,
+      });
+      expect(findSurroundingCandles(sorted, 2000)).toEqual({
+        left: c1,
+        right: c1,
+      });
+      expect(findSurroundingCandles(sorted, 3000)).toEqual({
+        left: c2,
+        right: c2,
+      });
+    });
+
+    it('handles timestamps strictly between candles in O(log N) binary search', () => {
+      const candles = Array.from({ length: 100 }, (_, i) =>
+        makeCandle(i, 100 + i, { timestamp: 1000 + i * 100 })
+      );
+
+      // Between candle 42 (timestamp 5200) and candle 43 (timestamp 5300)
+      const target = 5245;
+      const result = findSurroundingCandles(candles, target);
+      expect(result.left).toBe(candles[42]);
+      expect(result.right).toBe(candles[43]);
+      expect(result.left?.timestamp).toBe(5200);
+      expect(result.right?.timestamp).toBe(5300);
+    });
+
+    it('works on generic objects with timestamp property', () => {
+      const items = [
+        { timestamp: 10, label: 'A' },
+        { timestamp: 20, label: 'B' },
+        { timestamp: 30, label: 'C' },
+      ];
+      expect(findSurroundingCandles(items, 15)).toEqual({
+        left: items[0],
+        right: items[1],
+      });
+      expect(findSurroundingCandles(items, 5)).toEqual({
+        left: null,
+        right: items[0],
+      });
+      expect(findSurroundingCandles(items, 35)).toEqual({
+        left: items[2],
+        right: null,
+      });
+      expect(findSurroundingCandles(items, 20)).toEqual({
+        left: items[1],
+        right: items[1],
+      });
+    });
+
+    it('handles single-candle arrays correctly', () => {
+      const single = [makeCandle(0, 100, { timestamp: 1500 })];
+      expect(findSurroundingCandles(single, 1000)).toEqual({
+        left: null,
+        right: single[0],
+      });
+      expect(findSurroundingCandles(single, 1500)).toEqual({
+        left: single[0],
+        right: single[0],
+      });
+      expect(findSurroundingCandles(single, 2000)).toEqual({
+        left: single[0],
+        right: null,
+      });
+    });
+  });
+
+  describe('computeAllChartIndicators', () => {
+    it('returns empty series and null summary for empty array without throwing', () => {
+      const res = computeAllChartIndicators([]);
+      expect(res.sma20).toEqual([]);
+      expect(res.ema50).toEqual([]);
+      expect(res.vwap).toEqual([]);
+      expect(res.rsi14).toEqual([]);
+      expect(res.bb20).toEqual([]);
+      expect(res.summary).toEqual({
+        sma20: null,
+        ema50: null,
+        vwap: null,
+        rsi14: null,
+        bb20: null,
+        latestVolume: null,
+        latestPrice: null,
+      });
+    });
+
+    it('returns empty series for fewer than required candles without throwing', () => {
+      const candles5 = Array.from({ length: 5 }, (_, i) =>
+        makeCandle(i, 100 + i)
+      );
+      const res = computeAllChartIndicators(candles5);
+      expect(res.sma20).toEqual([]);
+      expect(res.ema50).toEqual([]);
+      expect(res.vwap).toHaveLength(5); // VWAP is computed whenever volume > 0
+      expect(res.rsi14).toEqual([]);
+      expect(res.bb20).toEqual([]);
+      expect(res.summary.sma20).toBeNull();
+      expect(res.summary.ema50).toBeNull();
+      expect(res.summary.vwap).not.toBeNull();
+      expect(res.summary.latestPrice).toBe(104);
+      expect(res.summary.latestVolume).toBe(1000);
+    });
+
+    it('computes all series and summary matching individual functions on full 60+ candle series', () => {
+      const candles60 = Array.from({ length: 60 }, (_, i) =>
+        makeCandle(i, 100 + Math.sin(i / 5) * 10, {
+          volume: 1000 + i * 50,
+        })
+      );
+
+      const all = computeAllChartIndicators(candles60);
+      const expectedSma20 = calculateSMA(candles60, 20);
+      const expectedEma50 = calculateEMA(candles60, 50);
+      const expectedVwap = calculateVWAP(candles60);
+      const expectedRsi14 = calculateRSI(candles60, 14);
+      const expectedBb20 = calculateBollingerBands(candles60, 20, 2);
+      const expectedSummary = computeChartIndicatorsSummary(candles60);
+
+      expect(all.sma20).toEqual(expectedSma20);
+      expect(all.ema50).toEqual(expectedEma50);
+      expect(all.vwap).toEqual(expectedVwap);
+      expect(all.rsi14).toEqual(expectedRsi14);
+      expect(all.bb20).toEqual(expectedBb20);
+      expect(all.summary).toEqual(expectedSummary);
+    });
+
+    it('sorts unsorted input candles and excludes malformed non-finite candles', () => {
+      const c0 = makeCandle(0, 100, { timestamp: 1000 });
+      const c1 = makeCandle(1, 105, { timestamp: 2000 });
+      const c2 = makeCandle(2, 110, { timestamp: 3000 });
+      const malformed = {
+        timestamp: Number.NaN,
+        open: 0,
+        high: 0,
+        low: 0,
+        close: Number.NaN,
+        volume: 0,
+      } as unknown as OHLCVCandle;
+
+      // Pass out of order and with malformed candle
+      const res = computeAllChartIndicators([c2, malformed, c0, c1]);
+      expect(res.vwap).toHaveLength(3);
+      expect(res.vwap[0]?.timestamp).toBe(1000);
+      expect(res.vwap[1]?.timestamp).toBe(2000);
+      expect(res.vwap[2]?.timestamp).toBe(3000);
+      expect(res.summary.latestPrice).toBe(110);
     });
   });
 });

@@ -1,0 +1,18 @@
+--- a/src/core/__tests__/watchlist-store.test.ts
++++ b/src/core/__tests__/watchlist-store.test.ts
+@@ -69,13 +69,13 @@
+     let saveCallCount = 0;
+ 
+     const delayedRepo: InMemoryStorageRepository = new InMemoryStorageRepository();
++    const originalSave = delayedRepo.saveWatchlists.bind(delayedRepo);
+     // Intercept saveWatchlists to delay completion
+     delayedRepo.saveWatchlists = async (watchlists) => {
+       saveCallCount++;
+       await new Promise<void>((resolve) => {
+         resolveSave = () => {
+-          delayedRepo.watchlists = [...watchlists];
+-          resolve();
++          void originalSave(watchlists).then(resolve);
+         };
+       });
+     };

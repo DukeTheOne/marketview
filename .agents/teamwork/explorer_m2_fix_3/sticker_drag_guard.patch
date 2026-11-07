@@ -1,0 +1,29 @@
+--- a/src/features/chart/overlays/plugins/StickerPlugin.tsx
++++ b/src/features/chart/overlays/plugins/StickerPlugin.tsx
+@@ -73,4 +73,5 @@ function StickerAnnotationComponent({
+   const [dragAnchor, setDragAnchor] = useState<LogicalAnchor | null>(null);
+   const dragAnchorRef = useRef<LogicalAnchor | null>(null);
++  const hasMovedRef = useRef<boolean>(false);
+   const primaryAnchor = dragAnchor ?? annotation.anchors[0];
+   const screenPos = primaryAnchor ? projector.logicalToScreen(primaryAnchor) : null;
+@@ -114,3 +115,4 @@ function StickerAnnotationComponent({
+     e.preventDefault();
+     isDraggingRef.current = true;
+-    dragAnchorRef.current = primaryAnchor;
++    hasMovedRef.current = false;
++    dragAnchorRef.current = null;
+     onSelect();
+@@ -128,3 +130,4 @@ function StickerAnnotationComponent({
+       const logical = projector.screenToLogical(point);
+       if (logical) {
++        hasMovedRef.current = true;
+         dragAnchorRef.current = logical;
+         setDragAnchor(logical);
+@@ -138,4 +141,5 @@ function StickerAnnotationComponent({
+       window.removeEventListener('mouseup', handleMouseUp);
+-      if (dragAnchorRef.current) {
++      if (hasMovedRef.current && dragAnchorRef.current) {
+         onUpdate({ anchors: [dragAnchorRef.current] });
+       }
++      hasMovedRef.current = false;
+       dragAnchorRef.current = null;

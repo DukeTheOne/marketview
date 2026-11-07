@@ -16,7 +16,7 @@ export function ChartToolbar({
   activeTool,
   annotationCount,
   onSelectTool,
-  showAdvancedTools = true,
+  showAdvancedTools = false,
 }: ChartToolbarProps) {
   return (
     <div className="pointer-events-auto absolute top-4 right-28 z-20 flex items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-900/90 p-1 backdrop-blur-md shadow-xl">

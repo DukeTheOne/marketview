@@ -124,4 +124,20 @@ describe('Chart Autoscale & Viewport Focus Logic', () => {
     expect(html).not.toContain('Fibonacci');
     expect(html).not.toContain('Trade Marker');
   });
+
+  it('defaults showAdvancedTools to false so Fibonacci and Trade Marker are hidden when prop is omitted', () => {
+    const html = renderToStaticMarkup(
+      createElement(ChartToolbar, {
+        activeTool: null,
+        annotationCount: 0,
+        onSelectTool: () => {},
+      })
+    );
+
+    expect(html).toContain('Pointer');
+    expect(html).toContain('Sticker');
+    expect(html).toContain('Trendline');
+    expect(html).not.toContain('Fib');
+    expect(html).not.toContain('Trade Marker');
+  });
 });

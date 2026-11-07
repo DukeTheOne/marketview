@@ -1,4 +1,4 @@
-import { useRef, type MouseEvent as ReactMouseEvent } from 'react';
+import { useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
   ArrowRight,
   Minus,
@@ -31,19 +31,22 @@ function TrendlineAnnotationComponent({
   onUpdate,
   onDelete,
 }: OverlayAnnotationRenderProps<TrendlinePayload>) {
+  const [dragAnchors, setDragAnchors] = useState<[LogicalAnchor, LogicalAnchor] | null>(null);
+  const dragAnchorsRef = useRef<[LogicalAnchor, LogicalAnchor] | null>(null);
   const isDraggingHandleRef = useRef<number | null>(null);
   const isDraggingLineRef = useRef<boolean>(false);
   const dragStartPointRef = useRef<{ x: number; y: number } | null>(null);
+  const hasMovedRef = useRef<boolean>(false);
 
-  const anchor1 = annotation.anchors[0];
-  const anchor2 = annotation.anchors[1];
+  const effectiveAnchor1 = dragAnchors ? dragAnchors[0] : annotation.anchors[0];
+  const effectiveAnchor2 = dragAnchors ? dragAnchors[1] : annotation.anchors[1];
 
-  if (!anchor1 || !anchor2) {
+  if (!effectiveAnchor1 || !effectiveAnchor2) {
     return null;
   }
 
-  const p1 = projector.logicalToScreen(anchor1);
-  const p2 = projector.logicalToScreen(anchor2);
+  const p1 = projector.logicalToScreen(effectiveAnchor1);
+  const p2 = projector.logicalToScreen(effectiveAnchor2);
 
   if (!p1 || !p2) {
     return null;
@@ -65,18 +68,45 @@ function TrendlineAnnotationComponent({
   const midY = (p1.y + p2.y) / 2;
 
   // Price delta & percentage
-  const deltaPrice = anchor2.price - anchor1.price;
-  const deltaPct = ((anchor2.price - anchor1.price) / anchor1.price) * 100;
+  const deltaPrice = effectiveAnchor2.price - effectiveAnchor1.price;
+  const deltaPct = ((effectiveAnchor2.price - effectiveAnchor1.price) / effectiveAnchor1.price) * 100;
   const isPositive = deltaPrice >= 0;
 
   const handleStartDragHandle = (index: number, e: ReactMouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
+    const anchor0 = annotation.anchors[0];
+    const anchor1 = annotation.anchors[1];
+    if (!anchor0 || !anchor1) return;
+
+    const initialAnchor = index === 0 ? anchor0 : anchor1;
+
     isDraggingHandleRef.current = index;
+    dragStartPointRef.current =
+      e.clientX !== undefined && e.clientY !== undefined
+        ? { x: e.clientX, y: e.clientY }
+        : null;
+    hasMovedRef.current = false;
+    dragAnchorsRef.current = null;
     onSelect();
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
       if (isDraggingHandleRef.current === null) return;
+
+      // Guard 1: Screen-space zero displacement (cursor back at drag start)
+      if (
+        dragStartPointRef.current &&
+        moveEvent.clientX === dragStartPointRef.current.x &&
+        moveEvent.clientY === dragStartPointRef.current.y
+      ) {
+        if (hasMovedRef.current) {
+          hasMovedRef.current = false;
+          dragAnchorsRef.current = null;
+          setDragAnchors(null);
+        }
+        return;
+      }
+
       const chartHost = document.querySelector('.overlay-canvas-root');
       if (!chartHost) return;
       const rect = chartHost.getBoundingClientRect();
@@ -87,17 +117,50 @@ function TrendlineAnnotationComponent({
       const logical = projector.screenToLogical(point);
       if (!logical) return;
 
+      // Guard 2: Logical anchor displacement (cursor back at initial anchor candle/price)
+      const isAnchorUnchanged =
+        logical.timestamp === initialAnchor.timestamp &&
+        logical.price === initialAnchor.price;
+
+      if (isAnchorUnchanged) {
+        if (hasMovedRef.current) {
+          hasMovedRef.current = false;
+          dragAnchorsRef.current = null;
+          setDragAnchors(null);
+        }
+        return;
+      }
+
+      hasMovedRef.current = true;
       const nextAnchors: [LogicalAnchor, LogicalAnchor] = [
-        isDraggingHandleRef.current === 0 ? logical : anchor1,
-        isDraggingHandleRef.current === 1 ? logical : anchor2,
+        index === 0 ? logical : anchor0,
+        index === 1 ? logical : anchor1,
       ];
-      onUpdate({ anchors: nextAnchors });
+      dragAnchorsRef.current = nextAnchors;
+      setDragAnchors(nextAnchors);
     };
 
     const handleMouseUp = () => {
       isDraggingHandleRef.current = null;
+      dragStartPointRef.current = null;
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
+
+      // Defense-in-depth: only commit onUpdate if moved and coordinates differ from annotation.anchors
+      if (hasMovedRef.current && dragAnchorsRef.current) {
+        const [a1, a2] = dragAnchorsRef.current;
+        const isUnchanged =
+          a1.timestamp === anchor0.timestamp &&
+          a1.price === anchor0.price &&
+          a2.timestamp === anchor1.timestamp &&
+          a2.price === anchor1.price;
+        if (!isUnchanged) {
+          onUpdate({ anchors: dragAnchorsRef.current });
+        }
+      }
+      hasMovedRef.current = false;
+      dragAnchorsRef.current = null;
+      setDragAnchors(null);
     };
 
     window.addEventListener('mousemove', handleMouseMove);
@@ -107,23 +170,58 @@ function TrendlineAnnotationComponent({
   const handleStartDragLine = (e: ReactMouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
+    const anchor0 = annotation.anchors[0];
+    const anchor1 = annotation.anchors[1];
+    if (!anchor0 || !anchor1) return;
+
+    const initialP1 = projector.logicalToScreen(anchor0) ?? { ...p1 };
+    const initialP2 = projector.logicalToScreen(anchor1) ?? { ...p2 };
+
     isDraggingLineRef.current = true;
     dragStartPointRef.current = { x: e.clientX, y: e.clientY };
+    hasMovedRef.current = false;
+    dragAnchorsRef.current = null;
     onSelect();
-
-    const initialP1 = { ...p1 };
-    const initialP2 = { ...p2 };
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
       if (!isDraggingLineRef.current || !dragStartPointRef.current) return;
       const dx = moveEvent.clientX - dragStartPointRef.current.x;
       const dy = moveEvent.clientY - dragStartPointRef.current.y;
 
+      // Guard 1: Screen-space zero displacement (cursor back at drag start)
+      if (dx === 0 && dy === 0) {
+        if (hasMovedRef.current) {
+          hasMovedRef.current = false;
+          dragAnchorsRef.current = null;
+          setDragAnchors(null);
+        }
+        return;
+      }
+
       const newL1 = projector.screenToLogical({ x: initialP1.x + dx, y: initialP1.y + dy });
       const newL2 = projector.screenToLogical({ x: initialP2.x + dx, y: initialP2.y + dy });
 
       if (newL1 && newL2) {
-        onUpdate({ anchors: [newL1, newL2] });
+        // Guard 2: Logical anchor displacement (both anchors unchanged from original)
+        const isUnchanged =
+          newL1.timestamp === anchor0.timestamp &&
+          newL1.price === anchor0.price &&
+          newL2.timestamp === anchor1.timestamp &&
+          newL2.price === anchor1.price;
+
+        if (isUnchanged) {
+          if (hasMovedRef.current) {
+            hasMovedRef.current = false;
+            dragAnchorsRef.current = null;
+            setDragAnchors(null);
+          }
+          return;
+        }
+
+        hasMovedRef.current = true;
+        const nextAnchors: [LogicalAnchor, LogicalAnchor] = [newL1, newL2];
+        dragAnchorsRef.current = nextAnchors;
+        setDragAnchors(nextAnchors);
       }
     };
 
@@ -132,6 +230,22 @@ function TrendlineAnnotationComponent({
       dragStartPointRef.current = null;
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
+
+      // Defense-in-depth: only commit onUpdate if moved and coordinates differ from annotation.anchors
+      if (hasMovedRef.current && dragAnchorsRef.current) {
+        const [a1, a2] = dragAnchorsRef.current;
+        const isUnchanged =
+          a1.timestamp === anchor0.timestamp &&
+          a1.price === anchor0.price &&
+          a2.timestamp === anchor1.timestamp &&
+          a2.price === anchor1.price;
+        if (!isUnchanged) {
+          onUpdate({ anchors: dragAnchorsRef.current });
+        }
+      }
+      hasMovedRef.current = false;
+      dragAnchorsRef.current = null;
+      setDragAnchors(null);
     };
 
     window.addEventListener('mousemove', handleMouseMove);
@@ -192,7 +306,6 @@ function TrendlineAnnotationComponent({
         onMouseDown={(e) => handleStartDragHandle(0, e)}
         title="Drag start anchor"
         className="pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2 flex h-4 w-4 cursor-grab items-center justify-center rounded-full border-2 border-white shadow-md active:cursor-grabbing hover:scale-125 transition-transform"
-        style-custom={{ backgroundColor: payload.color }}
       >
         <div className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: payload.color }} />
       </div>

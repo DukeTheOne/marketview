@@ -12,12 +12,9 @@ import {
 } from 'lightweight-charts';
 import {
   buildIntradayPricePoints,
-  calculateBollingerBands,
-  calculateEMA,
-  calculateSMA,
-  calculateVWAP,
-  computeChartIndicatorsSummary,
+  computeAllChartIndicators,
   findNearestHoverPoint,
+  findSurroundingCandles,
   normalizeExclusiveChartStyle,
   toggleExclusiveChartStyle,
   type IndicatorId,
@@ -83,7 +80,9 @@ export function ChartContainer({
 
   const [viewportRevision, setViewportRevision] = useState(0);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
-  const [hoverCursorX, setHoverCursorX] = useState<number | null>(null);
+  const [activeHoverPoint, setActiveHoverPoint] = useState<ProjectedHoverPoint | null>(null);
+  const activeHoverPointRef = useRef<ProjectedHoverPoint | null>(null);
+  const hoverCandidatesRef = useRef<ProjectedHoverPoint[]>([]);
 
   // Initialize active indicators with strictly exclusive primary chart style (CANDLES vs PRICE_15M),
   // defaulting to CANDLES while preserving user preference overrides.
@@ -96,8 +95,8 @@ export function ChartContainer({
     [candles]
   );
 
-  const indicatorSummary = useMemo(
-    () => computeChartIndicatorsSummary(sortedCandles),
+  const computedIndicators = useMemo(
+    () => computeAllChartIndicators(sortedCandles),
     [sortedCandles]
   );
 
@@ -316,35 +315,34 @@ export function ChartContainer({
     );
 
     sma20Series.setData(
-      calculateSMA(sorted, 20).map((p) => ({
+      computedIndicators.sma20.map((p) => ({
         time: p.timestamp as UTCTimestamp,
         value: p.value,
       }))
     );
 
     ema50Series.setData(
-      calculateEMA(sorted, 50).map((p) => ({
+      computedIndicators.ema50.map((p) => ({
         time: p.timestamp as UTCTimestamp,
         value: p.value,
       }))
     );
 
     vwapSeries.setData(
-      calculateVWAP(sorted).map((p) => ({
+      computedIndicators.vwap.map((p) => ({
         time: p.timestamp as UTCTimestamp,
         value: p.value,
       }))
     );
 
-    const bbPoints = calculateBollingerBands(sorted, 20, 2);
     bbUpperSeries.setData(
-      bbPoints.map((p) => ({
+      computedIndicators.bb20.map((p) => ({
         time: p.timestamp as UTCTimestamp,
         value: p.upper,
       }))
     );
     bbLowerSeries.setData(
-      bbPoints.map((p) => ({
+      computedIndicators.bb20.map((p) => ({
         time: p.timestamp as UTCTimestamp,
         value: p.lower,
       }))
@@ -399,7 +397,7 @@ export function ChartContainer({
       lastFittedSeriesKeyRef.current = currentSeriesKey;
     }
     setViewportRevision((rev) => rev + 1);
-  }, [ticker, timeframe, sortedCandles, focusRevision]);
+  }, [ticker, timeframe, sortedCandles, focusRevision, computedIndicators]);
 
   // 2. Non-destructive indicator visibility toggling:
   // Purely updates series visibility and styles without clearing data or re-fitting the chart
@@ -460,7 +458,7 @@ export function ChartContainer({
 
   // Unified projection memo: computes 15-minute price line SVG coordinates
   // and hover candidate points (Priority 1: 15m line points when visible; Priority 2: daily close prices when hidden)
-  const { pricePolylinePoints, hoverCandidates } = useMemo(() => {
+  const { pricePolylinePoints } = useMemo(() => {
     if (
       !chartApiRef.current ||
       !candleSeriesRef.current ||
@@ -468,7 +466,8 @@ export function ChartContainer({
       dimensions.height === 0 ||
       sortedCandles.length === 0
     ) {
-      return { pricePolylinePoints: '', hoverCandidates: [] as ProjectedHoverPoint[] };
+      hoverCandidatesRef.current = [];
+      return { pricePolylinePoints: '' };
     }
 
     const chart = chartApiRef.current;
@@ -563,9 +562,9 @@ export function ChartContainer({
       }
     }
 
+    hoverCandidatesRef.current = candidates;
     return {
       pricePolylinePoints: svgCoords.join(' '),
-      hoverCandidates: candidates,
     };
   }, [
     activeIndicators,
@@ -574,14 +573,6 @@ export function ChartContainer({
     dimensions,
     viewportRevision,
   ]);
-
-  const activeHoverPoint = useMemo(
-    () =>
-      hoverCursorX !== null
-        ? findNearestHoverPoint(hoverCursorX, hoverCandidates)
-        : null,
-    [hoverCursorX, hoverCandidates]
-  );
 
   const projector: CoordinateProjector = {
     logicalToScreen(anchor: LogicalAnchor): ScreenPoint | null {
@@ -602,27 +593,24 @@ export function ChartContainer({
       // smoothly interpolate or snap to nearest candle so drawing lines and annotations are ALWAYS visible:
       if (x === null && sortedCandles.length > 0) {
         const timeScale = chart.timeScale();
-        let leftCandle: OHLCVCandle | null = null;
-        let rightCandle: OHLCVCandle | null = null;
-
-        for (let i = 0; i < sortedCandles.length; i++) {
-          const c = sortedCandles[i]!;
-          if (c.timestamp <= anchor.timestamp) {
-            leftCandle = c;
-          } else {
-            rightCandle = c;
-            break;
-          }
-        }
+        const { left: leftCandle, right: rightCandle } = findSurroundingCandles(
+          sortedCandles,
+          anchor.timestamp
+        );
 
         if (leftCandle && rightCandle) {
-          const x1 = timeScale.timeToCoordinate(leftCandle.timestamp as UTCTimestamp);
-          const x2 = timeScale.timeToCoordinate(rightCandle.timestamp as UTCTimestamp);
-          if (x1 !== null && x2 !== null) {
-            const fraction =
-              (anchor.timestamp - leftCandle.timestamp) /
-              (rightCandle.timestamp - leftCandle.timestamp);
-            x = Number(x1) + fraction * (Number(x2) - Number(x1));
+          if (leftCandle === rightCandle || leftCandle.timestamp === rightCandle.timestamp) {
+            const coord = timeScale.timeToCoordinate(leftCandle.timestamp as UTCTimestamp);
+            x = coord !== null ? Number(coord) : null;
+          } else {
+            const x1 = timeScale.timeToCoordinate(leftCandle.timestamp as UTCTimestamp);
+            const x2 = timeScale.timeToCoordinate(rightCandle.timestamp as UTCTimestamp);
+            if (x1 !== null && x2 !== null) {
+              const fraction =
+                (anchor.timestamp - leftCandle.timestamp) /
+                (rightCandle.timestamp - leftCandle.timestamp);
+              x = Number(x1) + fraction * (Number(x2) - Number(x1));
+            }
           }
         } else if (leftCandle) {
           const coord = timeScale.timeToCoordinate(leftCandle.timestamp as UTCTimestamp);
@@ -673,9 +661,29 @@ export function ChartContainer({
       className="relative h-full w-full flex-1 bg-slate-950 select-none overflow-hidden"
       onMouseMove={(e) => {
         const rect = e.currentTarget.getBoundingClientRect();
-        setHoverCursorX(e.clientX - rect.left);
+        const cursorX = e.clientX - rect.left;
+        const nearest = findNearestHoverPoint(cursorX, hoverCandidatesRef.current);
+        const prev = activeHoverPointRef.current;
+        const isSame =
+          prev === nearest ||
+          (prev !== null &&
+            nearest !== null &&
+            prev.timestamp === nearest.timestamp &&
+            prev.price === nearest.price &&
+            prev.source === nearest.source &&
+            prev.x === nearest.x &&
+            prev.y === nearest.y);
+        if (!isSame) {
+          activeHoverPointRef.current = nearest;
+          setActiveHoverPoint(nearest);
+        }
       }}
-      onMouseLeave={() => setHoverCursorX(null)}
+      onMouseLeave={() => {
+        if (activeHoverPointRef.current !== null) {
+          activeHoverPointRef.current = null;
+          setActiveHoverPoint(null);
+        }
+      }}
     >
       {/* Lightweight Charts Mount Node */}
       <div ref={containerRef} className="h-full w-full" />
@@ -697,7 +705,7 @@ export function ChartContainer({
       <IndicatorToolbar
         activeIndicators={activeIndicators}
         onToggleIndicator={handleToggleIndicator}
-        summary={indicatorSummary}
+        summary={computedIndicators.summary}
       />
 
       {/* 15-Minute Intraday Actual Price Line Layer */}
@@ -765,7 +773,7 @@ export function ChartContainer({
       )}
 
       {/* Loading Indicator */}
-      {isLoading && (
+      {isLoading && sortedCandles.length === 0 && (
         <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-slate-950/40 backdrop-blur-[1px]">
           <div className="rounded-lg border border-slate-800 bg-slate-900 px-4 py-2 text-xs font-medium text-slate-300 shadow-lg">
             Syncing {ticker} ({timeframe}) OHLCV series...

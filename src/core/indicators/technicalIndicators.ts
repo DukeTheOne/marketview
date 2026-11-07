@@ -102,6 +102,15 @@ export interface ChartIndicatorsSummary {
   latestPrice?: number | null;
 }
 
+export interface ComputedChartIndicators {
+  sma20: IndicatorPoint[];
+  ema50: IndicatorPoint[];
+  vwap: IndicatorPoint[];
+  rsi14: IndicatorPoint[];
+  bb20: BollingerPoint[];
+  summary: ChartIndicatorsSummary;
+}
+
 /**
  * Formats a raw share/contract volume number into a compact human-readable string (e.g. "48.2M", "850K").
  */
@@ -444,38 +453,65 @@ export function calculateRSI(
 }
 
 /**
- * Computes the latest bar's indicator summary across standard chart indicators.
+ * Computes all standard chart indicator series and the latest readout summary in a single pass
+ * over candles, avoiding redundant sorting and duplicate series calculations.
  */
-export function computeChartIndicatorsSummary(
+export function computeAllChartIndicators(
   candles: OHLCVCandle[]
-): ChartIndicatorsSummary {
+): ComputedChartIndicators {
   if (!Array.isArray(candles) || candles.length === 0) {
     return {
-      sma20: null,
-      ema50: null,
-      vwap: null,
-      rsi14: null,
-      bb20: null,
-      latestVolume: null,
-      latestPrice: null,
+      sma20: [],
+      ema50: [],
+      vwap: [],
+      rsi14: [],
+      bb20: [],
+      summary: {
+        sma20: null,
+        ema50: null,
+        vwap: null,
+        rsi14: null,
+        bb20: null,
+        latestVolume: null,
+        latestPrice: null,
+      },
     };
   }
 
   const sorted = sortAndValidateCandles(candles);
+  if (sorted.length === 0) {
+    return {
+      sma20: [],
+      ema50: [],
+      vwap: [],
+      rsi14: [],
+      bb20: [],
+      summary: {
+        sma20: null,
+        ema50: null,
+        vwap: null,
+        rsi14: null,
+        bb20: null,
+        latestVolume: null,
+        latestPrice: null,
+      },
+    };
+  }
+
+  const sma20 = calculateSMA(sorted, 20);
+  const ema50 = calculateEMA(sorted, 50);
+  const vwap = calculateVWAP(sorted);
+  const rsi14 = calculateRSI(sorted, 14);
+  const bb20 = calculateBollingerBands(sorted, 20, 2);
+
   const latestCandle = sorted[sorted.length - 1];
-  const sma20Points = calculateSMA(candles, 20);
-  const ema50Points = calculateEMA(candles, 50);
-  const vwapPoints = calculateVWAP(candles);
-  const rsi14Points = calculateRSI(candles, 14);
-  const bb20Points = calculateBollingerBands(candles, 20, 2);
+  const lastSma20 = sma20[sma20.length - 1];
+  const lastEma50 = ema50[ema50.length - 1];
+  const lastVwap = vwap[vwap.length - 1];
+  const lastRsi14 = rsi14[rsi14.length - 1];
+  const lastBb20 = bb20[bb20.length - 1];
 
-  const lastSma20 = sma20Points[sma20Points.length - 1];
-  const lastEma50 = ema50Points[ema50Points.length - 1];
-  const lastVwap = vwapPoints[vwapPoints.length - 1];
-  const lastRsi14 = rsi14Points[rsi14Points.length - 1];
-  const lastBb20 = bb20Points[bb20Points.length - 1];
-
-  return {
+  const summary: ChartIndicatorsSummary = {
     sma20: lastSma20 ? lastSma20.value : null,
     ema50: lastEma50 ? lastEma50.value : null,
     vwap: lastVwap ? lastVwap.value : null,
@@ -495,6 +531,78 @@ export function computeChartIndicatorsSummary(
       latestCandle && Number.isFinite(latestCandle.close)
         ? round2(latestCandle.close)
         : null,
+  };
+
+  return {
+    sma20,
+    ema50,
+    vwap,
+    rsi14,
+    bb20,
+    summary,
+  };
+}
+
+/**
+ * Computes the latest bar's indicator summary across standard chart indicators.
+ */
+export function computeChartIndicatorsSummary(
+  candles: OHLCVCandle[]
+): ChartIndicatorsSummary {
+  return computeAllChartIndicators(candles).summary;
+}
+
+/**
+ * O(log N) binary search over ascending-sorted candles to find the bounding
+ * [leftCandle, rightCandle] pair for any arbitrary Unix timestamp.
+ */
+export function findSurroundingCandles<T extends { timestamp: number }>(
+  sortedCandles: ReadonlyArray<T>,
+  targetTimestamp: number
+): { left: T | null; right: T | null } {
+  if (
+    !sortedCandles ||
+    sortedCandles.length === 0 ||
+    !Number.isFinite(targetTimestamp)
+  ) {
+    return { left: null, right: null };
+  }
+
+  const first = sortedCandles[0]!;
+  if (targetTimestamp < first.timestamp) {
+    return { left: null, right: first };
+  }
+  if (targetTimestamp === first.timestamp) {
+    return { left: first, right: first };
+  }
+
+  const last = sortedCandles[sortedCandles.length - 1]!;
+  if (targetTimestamp > last.timestamp) {
+    return { left: last, right: null };
+  }
+  if (targetTimestamp === last.timestamp) {
+    return { left: last, right: last };
+  }
+
+  let low = 0;
+  let high = sortedCandles.length - 1;
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const candle = sortedCandles[mid]!;
+
+    if (candle.timestamp === targetTimestamp) {
+      return { left: candle, right: candle };
+    } else if (candle.timestamp < targetTimestamp) {
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  return {
+    left: sortedCandles[high] ?? null,
+    right: sortedCandles[low] ?? null,
   };
 }
 

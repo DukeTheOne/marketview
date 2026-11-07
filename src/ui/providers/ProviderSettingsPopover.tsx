@@ -11,9 +11,9 @@ import {
 } from 'lucide-react';
 
 export type ProviderMode = 'yahoo' | 'finnhub' | 'demo';
-export type LivePollIntervalSec = 0 | 5 | 15 | 30;
+export type LivePollIntervalSec = 0 | 5 | 15 | 30 | 60 | 300;
 
-const POLL_INTERVAL_OPTIONS: LivePollIntervalSec[] = [0, 5, 15, 30];
+const POLL_INTERVAL_OPTIONS: LivePollIntervalSec[] = [0, 15, 60, 300];
 
 export interface ProviderSettingsPopoverProps {
   isOpen: boolean;
@@ -241,7 +241,13 @@ export function ProviderSettingsPopover({
             </span>
           </div>
           <span className="font-mono text-[11px] text-slate-400">
-            {pollIntervalSec > 0 ? `Every ${pollIntervalSec}s` : 'Paused'}
+            {pollIntervalSec === 0
+              ? 'Paused'
+              : pollIntervalSec === 60
+              ? 'Every 1m'
+              : pollIntervalSec === 300
+              ? 'Every 5m'
+              : `Every ${pollIntervalSec}s`}
           </span>
         </div>
 
@@ -260,7 +266,7 @@ export function ProviderSettingsPopover({
                     : 'border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700 hover:text-slate-200'
                 }`}
               >
-                {sec === 0 ? 'Off' : `${sec}s`}
+                {sec === 0 ? 'Off' : sec === 60 ? '1m' : sec === 300 ? '5m' : `${sec}s`}
               </button>
             );
           })}

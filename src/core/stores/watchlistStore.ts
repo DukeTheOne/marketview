@@ -54,21 +54,25 @@ export function createWatchlistStore(
       const existing = await repository.getWatchlists();
       if (existing.length > 0) {
         const firstId = existing[0]?.id ?? '';
+        const currentId = get().activeWatchlistId;
+        const validActiveId = existing.some((w) => w.id === currentId)
+          ? currentId
+          : firstId;
         set({
           watchlists: existing,
-          activeWatchlistId: get().activeWatchlistId || firstId,
+          activeWatchlistId: validActiveId,
           isHydrated: true,
         });
         return existing;
       }
 
       const seeded = createDefaultWatchlists(nowSecProvider());
-      await repository.saveWatchlists(seeded);
       set({
         watchlists: seeded,
         activeWatchlistId: seeded[0]?.id ?? '',
         isHydrated: true,
       });
+      await repository.saveWatchlists(seeded);
       return seeded;
     },
 
@@ -91,11 +95,11 @@ export function createWatchlistStore(
       });
 
       const next = [...get().watchlists, newWatchlist];
-      await repository.saveWatchlists(next);
       set({
         watchlists: next,
         activeWatchlistId: newWatchlist.id,
       });
+      await repository.saveWatchlists(next);
       return newWatchlist;
     },
 
@@ -110,8 +114,8 @@ export function createWatchlistStore(
             })
           : w
       );
-      await repository.saveWatchlists(next);
       set({ watchlists: next });
+      await repository.saveWatchlists(next);
     },
 
     deleteWatchlist: async (id: string) => {
@@ -121,13 +125,13 @@ export function createWatchlistStore(
         return;
       }
       const next = current.filter((w) => w.id !== id);
-      await repository.saveWatchlists(next);
       const nextActiveId =
         get().activeWatchlistId === id ? (next[0]?.id ?? '') : get().activeWatchlistId;
       set({
         watchlists: next,
         activeWatchlistId: nextActiveId,
       });
+      await repository.saveWatchlists(next);
     },
 
     addTicker: async (watchlistId: string, rawTicker: string) => {
@@ -147,8 +151,8 @@ export function createWatchlistStore(
         });
       });
 
-      await repository.saveWatchlists(next);
       set({ watchlists: next });
+      await repository.saveWatchlists(next);
     },
 
     removeTicker: async (watchlistId: string, rawTicker: string) => {
@@ -165,8 +169,8 @@ export function createWatchlistStore(
         });
       });
 
-      await repository.saveWatchlists(next);
       set({ watchlists: next });
+      await repository.saveWatchlists(next);
     },
   }));
 }

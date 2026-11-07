@@ -1,154 +1,153 @@
-# Handoff Report: Milestone 1 (Fibonacci Retracement Chart Integration)
+# Handoff Report: Milestone 1 Headless Core Hardening
 
-**Agent**: `worker_m1`  
-**Role**: Implementation Specialist (Milestone 1: Fibonacci Retracement Chart Integration)  
-**Parent**: `orchestrator_1` (`5baf8267-0986-4e4c-9c66-3023b959d67b`)  
-**Date**: 2026-10-27T08:15:00Z  
-**Target Milestone**: Milestone 1 (Requirement R1)  
+**Agent**: worker_m1 (Core Implementation Specialist)  
+**Parent**: a9a9c8ed-8a35-4f8f-8dd8-9119837c3c50  
+**Timestamp**: 2026-11-07T17:43:30Z  
 
 ---
 
 ## 1. Observation
 
-### 1.1 Files Modified & Created
-1. **`src/features/chart/overlays/OverlayCanvas.tsx`**:
-   - Added side-effect import `import './plugins/FibonacciPlugin';` at line 13.
-   - Added two-step guidance banner for `activeTool === 'fibonacci'` at lines 136–145:
-     ```tsx
-     if (activeTool === 'fibonacci') {
-       return (
-         <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-purple-500/40 bg-purple-950/85 px-4 py-1.5 text-xs font-medium text-purple-200 shadow-xl backdrop-blur-md">
-           {draftAnchors.length === 0
-             ? 'Click chart to place first anchor of Fibonacci retracement · Click Pointer to cancel'
-             : 'Click chart to place second anchor and finish Fibonacci retracement'}
-         </div>
-       );
+### 1.1 Implementation Changes in Core Domain
+1. `src/core/indicators/technicalIndicators.ts`:
+   - Exported `ComputedChartIndicators` interface (lines 105–112):
+     ```ts
+     export interface ComputedChartIndicators {
+       sma20: IndicatorPoint[];
+       ema50: IndicatorPoint[];
+       vwap: IndicatorPoint[];
+       rsi14: IndicatorPoint[];
+       bb20: BollingerPoint[];
+       summary: ChartIndicatorsSummary;
      }
      ```
-2. **`src/features/chart/overlays/ChartToolbar.tsx`**:
-   - Imported `Percent` from `lucide-react` at line 1.
-   - Added "Fib" button with `Percent` icon and purple styling between Trendline and Trade Marker buttons at lines 59–72:
-     ```tsx
-     <button
-       type="button"
-       title="Fibonacci Retracement (Click twice to calculate Fibonacci retracement levels)"
-       onClick={() => onSelectTool(activeTool === 'fibonacci' ? null : 'fibonacci')}
-       className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition ${
-         activeTool === 'fibonacci'
-           ? 'bg-purple-500 text-slate-950 shadow-sm font-semibold'
-           : 'text-slate-400 hover:text-purple-300'
-       }`}
-     >
-       <Percent className="h-3.5 w-3.5" />
-       <span>Fib</span>
-     </button>
+   - Implemented `computeAllChartIndicators(candles: OHLCVCandle[]): ComputedChartIndicators` (lines 459–538), computing SMA 20, EMA 50, VWAP, RSI 14, BB 20, and the summary in a single pass over sorted candles without redundant sorting or duplicate series runs. Handles empty array or invalid candle input returning empty arrays and null summary without throwing.
+   - Refactored `computeChartIndicatorsSummary` (lines 543–547) to delegate directly to `computeAllChartIndicators(candles).summary`.
+   - Implemented `findSurroundingCandles<T extends { timestamp: number }>(sortedCandles: ReadonlyArray<T>, targetTimestamp: number): { left: T | null; right: T | null }` (lines 553–602) using $O(\log N)$ binary search, returning `{ left: null, right: first }` when target is before first, `{ left: last, right: null }` when after last, `{ left: candle, right: candle }` on exact matches, and `{ left: candleLeft, right: candleRight }` when strictly between.
+2. `src/core/schemas/preferences.ts`:
+   - Extended `LivePollIntervalSchema` (lines 8–15) with `z.literal(60)` and `z.literal(300)` while preserving `UserPreferencesSchema.pollIntervalSec` default as `15`.
+3. `src/core/serialization/workspaceExport.ts`:
+   - In `mergeWorkspaceSnapshots` (lines 292–301), preserved `activeIndicators: local.preferences.activeIndicators` and `pollIntervalSec: local.preferences.pollIntervalSec` when `local.preferences && hasSyncedBefore` is true.
+   - In `computeWorkspaceContentHash` (lines 448–460), excluded `activeIndicators` and `pollIntervalSec` from preferences projection so cloud sync dirty calculation tracks only domain data and persistent account credentials.
+4. `src/core/stores/annotationStore.ts`:
+   - Updated `addAnnotation` (lines 84–90), `updateAnnotation` (lines 115–117), and `deleteAnnotation` (lines 122–127) to call `set(...)` synchronously immediately before `await repository.saveAnnotations(next)`.
+5. `src/core/stores/watchlistStore.ts`:
+   - In `hydrate()` (lines 56–63), validated that `get().activeWatchlistId` exists in loaded `existing` watchlists, falling back to `firstId` if stale or missing. Seeded watchlists also perform synchronous `set(...)` before repository save.
+   - In `createWatchlist` (lines 94–99), `renameWatchlist` (lines 114–116), `deleteWatchlist` (lines 125–130), `addTicker` (lines 150–152), and `removeTicker` (lines 167–169), moved `set(...)` synchronously before `await repository.saveWatchlists(next)`.
+6. `src/core/index.ts`:
+   - Verified that line 26 (`export * from './indicators/technicalIndicators';`) re-exports all newly added types and functions.
+
+### 1.2 Test Execution Results
+1. `npx vitest run src/core/`:
+   - Exit code: `0`.
+   - Result: 18 test files passed (18 total), 146 tests passed (146 total), 0 failures.
+   - Verbatim summary:
      ```
-3. **`src/features/chart/overlays/__tests__/fibonacci-plugin.test.ts`** (new file):
-   - Added 9 unit tests across three suites:
-     - `calculateFibonacciLevels`: uptrend calculations, downtrend calculations, custom ratios / extensions, and flat price equality.
-     - `Registry Self-Registration`: verification that `overlayPluginRegistry.get('fibonacci')` is defined and matches `fibonacciPlugin`, and `overlayPluginRegistry.getAll()` includes `'fibonacci'`.
-     - `Plugin Metadata and Default Payload`: verification of `requiredAnchors === 2`, `type === 'fibonacci'`, `label === 'Fib Retracement'`, `createDefaultPayload` schema conformance, and `renderDraftPreview` guard branches.
-
-### 1.2 Verification Commands & Exact Output
-1. **Typecheck (`npm run typecheck`)**:
-   ```
-   > marketview@0.1.0 typecheck
-   > tsc --noEmit
-   (Exit code 0)
-   ```
-2. **Vitest Unit Tests (`npm run test`)**:
-   ```
-   > marketview@0.1.0 test
-   > vitest run
-
-   ✓ src/core/__tests__/fibonacci-schema.test.ts (5 tests)
-   ✓ src/core/__tests__/architecture-boundaries.test.ts (2 tests)
-   ✓ src/core/__tests__/trendline-schema.test.ts (2 tests)
-   ✓ src/core/__tests__/alert-store.test.ts (5 tests)
-   ✓ src/core/__tests__/cached-provider.test.ts (4 tests)
-   ✓ src/core/__tests__/trade-journal.test.ts (3 tests)
-   ✓ src/core/__tests__/annotation-store.test.ts (2 tests)
-   ✓ src/core/__tests__/watchlist-store.test.ts (1 test)
-   ✓ src/mcp/__tests__/mcp-server.test.ts (1 test)
-   ✓ src/core/__tests__/mobile-portability.test.ts (2 tests)
-   ✓ src/features/chart/overlays/__tests__/fibonacci-plugin.test.ts (9 tests)
-
-   Test Files  11 passed (11)
-        Tests  36 passed (36)
-   (Exit code 0)
-   ```
-3. **Production Build (`npm run build`)**:
-   ```
-   > marketview@0.1.0 build
-   > tsc --noEmit && vite build
-
-   ✓ 1639 modules transformed.
-   dist/index.html                   0.57 kB │ gzip:   0.38 kB
-   dist/assets/index-DdhIZEXJ.css   45.67 kB │ gzip:   7.75 kB
-   dist/assets/index-DOKI9sa8.js   546.22 kB │ gzip: 160.25 kB
-   ✓ built in 2.47s
-   (Exit code 0)
-   ```
-4. **Git Scope Check (`git diff ...`)**:
-   Changes are strictly confined to assigned files (`OverlayCanvas.tsx`, `ChartToolbar.tsx`, `src/features/chart/overlays/__tests__/fibonacci-plugin.test.ts`).
+     Test Files  18 passed (18)
+          Tests  146 passed (146)
+       Duration  2.76s
+     ```
+2. `npx vitest run src/core/__tests__/technical-indicators.test.ts`:
+   - Exit code: `0`.
+   - Result: 26 tests passed (including 6 new tests for `findSurroundingCandles` and 4 new tests for `computeAllChartIndicators`).
+3. `npx vitest run src/core/__tests__/firebase-sync-and-gc.test.ts`:
+   - Exit code: `0`.
+   - Result: 21 tests passed (updated line 430 assertion for local indicator preservation, and verified content hash invariance when `activeIndicators` or `pollIntervalSec` changes).
+4. `npx vitest run src/core/__tests__/watchlist-store.test.ts`:
+   - Exit code: `0`.
+   - Result: 3 tests passed (verified `hydrate()` stale `activeWatchlistId` fallback to `firstId`, and verified synchronous in-memory state updates before `saveWatchlists` resolves).
+5. `npx vitest run src/core/__tests__/architecture-boundaries.test.ts`:
+   - Exit code: `0`.
+   - Result: 2 tests passed, confirming 0 UI/DOM/React/LightweightCharts imports in `src/core/**`.
+6. `npx vitest run src/core/__tests__/mobile-portability.test.ts`:
+   - Exit code: `0`.
+   - Result: 2 tests passed, confirming strict mobile portability.
 
 ---
 
 ## 2. Logic Chain
 
-1. **Auto-Registration via Side-Effect Import**:
-   - `FibonacciPlugin.tsx` executes `overlayPluginRegistry.register(fibonacciPlugin)` at module evaluation time.
-   - By adding `import './plugins/FibonacciPlugin'` to `OverlayCanvas.tsx`, `fibonacciPlugin` is guaranteed to be registered in `overlayPluginRegistry` as soon as the chart overlay mounts, without altering the core registry implementation.
-2. **Toolbar Integration**:
-   - Adding the "Fib" button to `ChartToolbar.tsx` invokes `onSelectTool(activeTool === 'fibonacci' ? null : 'fibonacci')`, allowing the user to enter and exit Fibonacci placement mode.
-   - Styling with purple accent (`bg-purple-500 text-slate-950 font-semibold` when active, `text-slate-400 hover:text-purple-300` when inactive) visually differentiates it from Trendline (sky), Sticker (amber), and Trade Marker (emerald).
-3. **Step Guidance Banner**:
-   - When `activeTool === 'fibonacci'`, `OverlayCanvas.tsx` renders the status banner based on `draftAnchors.length`.
-   - When `draftAnchors.length === 0`: guides user to click chart for the first anchor (0.0% level).
-   - When `draftAnchors.length === 1`: guides user to click chart for the second anchor (100.0% level) to commit the 2-point retracement.
-4. **Architectural & Type Safety**:
-   - No React/DOM dependencies introduced to `src/core/`.
-   - `OverlayCanvas` continues to manage logical coordinates `(timestamp, price)` and delegates rendering/preview to `FibonacciPlugin`.
-   - All tests pass with full TypeScript strictness.
+1. **Indicator Performance Optimization**:
+   - `calculateSMA`, `calculateEMA`, `calculateVWAP`, `calculateRSI`, and `calculateBollingerBands` take sorted candles and return indicator points.
+   - Previously, `ChartContainer` called these functions individually and `computeChartIndicatorsSummary` re-sorted and re-calculated all of them again.
+   - `computeAllChartIndicators` sorts and validates the candles once, invokes each indicator calculator over the sorted series, constructs `summary` from the terminal elements, and returns `{ sma20, ema50, vwap, rsi14, bb20, summary }`.
+   - `computeChartIndicatorsSummary` now delegates directly to `computeAllChartIndicators(candles).summary`, guaranteeing exact mathematical equivalence across the entire app.
+2. **Binary Search Interpolation**:
+   - `findSurroundingCandles` provides $O(\log N)$ search over ascending-sorted candles.
+   - Immediate boundary checks handle empty arrays, `targetTimestamp < first.timestamp`, and `targetTimestamp > last.timestamp`.
+   - Standard binary search returns `{ left: candle, right: candle }` on exact hits (preventing divide-by-zero during linear interpolation) and `{ left: sortedCandles[high], right: sortedCandles[low] }` when between bars.
+3. **Cloud Sync Isolation**:
+   - Toggling indicators or switching auto-refresh intervals are local viewport concerns.
+   - Excluding `activeIndicators` and `pollIntervalSec` from `computeWorkspaceContentHash` ensures `isDirty` remains `false` when users toggle chart indicators or adjust auto-refresh.
+   - Preserving local `activeIndicators` and `pollIntervalSec` in `mergeWorkspaceSnapshots` on initialized devices (`hasSyncedBefore === true`) prevents incoming remote snapshots from wiping local chart view configuration.
+4. **Optimistic Store Updates**:
+   - In `annotationStore` and `watchlistStore`, awaiting repository saves before `set(...)` created a race condition where subsequent synchronous calls read stale state.
+   - Moving `set(...)` immediately after Zod validation ensures state is updated in memory synchronously before async persistence completes.
+   - In `watchlistStore.hydrate()`, validating `existing.some((w) => w.id === currentId)` ensures stale or deleted `activeWatchlistId` references safely fall back to `firstId`.
 
 ---
 
 ## 3. Caveats
 
-- No caveats. All changes strictly adhere to assigned file ownership and project invariants.
+1. **Whole-App Typecheck (`npm run typecheck`)**:
+   - Running `npm run typecheck` (`tsc --noEmit`) currently yields 1 error in `src/App.tsx:812`:
+     ```
+     src/App.tsx:812:9 - error TS2322: Type '0 | 5 | 30 | 60 | 15 | 300' is not assignable to type 'LivePollIntervalSec | undefined'.
+       Type '60' is not assignable to type 'LivePollIntervalSec | undefined'.
+     812         pollIntervalSec={savedPreferences.pollIntervalSec}
+     ```
+   - This occurs because `src/ui/providers/ProviderSettingsPopover.tsx` line 14 still defines `export type LivePollIntervalSec = 0 | 5 | 15 | 30;`.
+   - In the project plan, updating `ProviderSettingsPopover.tsx` is assigned to Milestone 2 (worker_m2, task F16). As worker_m1 exclusively owns files in `src/core/**` and must strictly respect file boundaries, worker_m1 left `src/ui/` untouched for worker_m2. Once worker_m2 updates `LivePollIntervalSec` in `ProviderSettingsPopover.tsx`, `npm run typecheck` will pass with 0 errors across the entire repository.
 
 ---
 
 ## 4. Conclusion
 
-Milestone 1 (Requirement R1: Fibonacci Retracement Chart Integration) is fully implemented, verified, and ready for integration. All tests pass with 0 failures, TypeScript compiles with 0 errors, and the production build succeeds.
+All Milestone 1 headless core tasks are complete, genuine, and verified:
+- `ComputedChartIndicators`, `computeAllChartIndicators`, and `findSurroundingCandles` are exported and tested in `src/core/indicators/technicalIndicators.ts`.
+- `LivePollIntervalSchema` in `src/core/schemas/preferences.ts` supports 60 and 300 with default 15.
+- Cloud sync hash calculation isolates domain data from local indicators and poll interval in `src/core/serialization/workspaceExport.ts`.
+- `annotationStore` and `watchlistStore` update state synchronously before repository writes, with `activeWatchlistId` fallback validation in `hydrate()`.
+- All 18 test suites in `src/core/` (146 tests) pass with 0 failures, 0 regressions, and zero architectural boundary violations.
 
 ---
 
 ## 5. Verification Method
 
-To independently verify Milestone 1:
+To independently verify the implementation:
 
-1. **Run TypeScript Check**:
+1. **Run Core Unit Tests**:
    ```bash
-   npm run typecheck
+   npx vitest run src/core/
    ```
-   *Expected: exits 0 with zero errors.*
+   Expect: 18 passed test files, 146 passed tests, 0 failures.
 
-2. **Run Unit Tests**:
+2. **Run Technical Indicators Tests**:
    ```bash
-   npm run test
+   npx vitest run src/core/__tests__/technical-indicators.test.ts
    ```
-   *Expected: 11 test files and 36 tests passing.*
+   Expect: 26 passed tests covering `findSurroundingCandles` and `computeAllChartIndicators`.
 
-3. **Verify Fibonacci Plugin Specifically**:
+3. **Run Sync & Content Hash Invariance Tests**:
    ```bash
-   npx vitest run src/features/chart/overlays/__tests__/fibonacci-plugin.test.ts
+   npx vitest run src/core/__tests__/firebase-sync-and-gc.test.ts
    ```
-   *Expected: all 9 tests pass.*
+   Expect: 21 passed tests verifying local indicator preservation and content hash invariance.
 
-4. **Run Production Build**:
+4. **Run Watchlist Store Tests**:
    ```bash
-   npm run build
+   npx vitest run src/core/__tests__/watchlist-store.test.ts
    ```
-   *Expected: exits 0 and produces bundle in `dist/`.*
+   Expect: 3 passed tests verifying stale activeWatchlistId fallback and synchronous state update before save.
+
+5. **Run Architectural Boundary & Portability Tests**:
+   ```bash
+   npx vitest run src/core/__tests__/architecture-boundaries.test.ts
+   npx vitest run src/core/__tests__/mobile-portability.test.ts
+   ```
+   Expect: 4 passed tests, 0 violations.
+
+6. **Invalidation Conditions**:
+   - If `computeWorkspaceContentHash` outputs different hashes when `activeIndicators` or `pollIntervalSec` changes, sync isolation is violated.
+   - If `findSurroundingCandles` returns non-null left/right for out-of-range timestamps or fails $O(\log N)$ bounds, coordinate interpolation is broken.
+   - If `watchlistStore.hydrate()` retains an ID not in `existing`, stale watchlist fallback is invalidated.

@@ -295,6 +295,8 @@ export function mergeWorkspaceSnapshots(
               activeTimeframe: local.preferences.activeTimeframe,
               activeWatchlistId: local.preferences.activeWatchlistId,
               isSidebarCollapsed: local.preferences.isSidebarCollapsed,
+              activeIndicators: local.preferences.activeIndicators,
+              pollIntervalSec: local.preferences.pollIntervalSec,
             }
           : {}),
         finnhubApiKey:
@@ -445,16 +447,14 @@ export function computeWorkspaceContentHash(snapshot: WorkspaceBackup): string {
         acc[key] = snapshot.deletedIds[key]!;
         return acc;
       }, {}),
-    // Only hash persistent account & indicator configuration; exclude ephemeral viewport state
-    // (activeTicker, activeTimeframe, activeWatchlistId, isSidebarCollapsed, lastCloudSyncTimestamp)
+    // Only hash persistent account configuration; exclude ephemeral viewport and local view state
+    // (activeTicker, activeTimeframe, activeWatchlistId, isSidebarCollapsed, lastCloudSyncTimestamp, pollIntervalSec, activeIndicators)
     preferences: snapshot.preferences
       ? {
           providerMode: snapshot.preferences.providerMode,
           finnhubApiKey: snapshot.preferences.finnhubApiKey,
           firebaseApiKey: snapshot.preferences.firebaseApiKey,
           firebaseProjectId: snapshot.preferences.firebaseProjectId,
-          pollIntervalSec: snapshot.preferences.pollIntervalSec,
-          activeIndicators: snapshot.preferences.activeIndicators,
         }
       : undefined,
   };

@@ -82,11 +82,11 @@ export function createAnnotationStore(
       });
 
       const next = [...get().annotations, newAnnotation];
-      await repository.saveAnnotations(next);
       set({
         annotations: next,
         selectedAnnotationId: newAnnotation.id,
       });
+      await repository.saveAnnotations(next);
       return newAnnotation;
     },
 
@@ -112,18 +112,18 @@ export function createAnnotationStore(
         });
       });
 
-      await repository.saveAnnotations(next);
       set({ annotations: next });
+      await repository.saveAnnotations(next);
     },
 
     deleteAnnotation: async (id) => {
       const next = get().annotations.filter((a) => a.id !== id);
-      await repository.saveAnnotations(next);
       set((state) => ({
         annotations: next,
         selectedAnnotationId:
           state.selectedAnnotationId === id ? null : state.selectedAnnotationId,
       }));
+      await repository.saveAnnotations(next);
     },
 
     getAnnotationsForTicker: (rawTicker: string) => {

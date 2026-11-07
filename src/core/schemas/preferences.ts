@@ -10,6 +10,8 @@ export const LivePollIntervalSchema = z.union([
   z.literal(5),
   z.literal(15),
   z.literal(30),
+  z.literal(60),
+  z.literal(300),
 ]);
 export type LivePollInterval = z.infer<typeof LivePollIntervalSchema>;
 
