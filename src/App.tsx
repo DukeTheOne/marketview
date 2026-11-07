@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from 'zustand';
 import {
   CachedMarketDataProvider,
@@ -18,6 +18,10 @@ import {
   mergeWorkspaceSnapshots,
   parseWorkspaceBackup,
   serializeWorkspaceBackup,
+  computeWorkspaceContentHash,
+  AUTO_SYNC_DEBOUNCE_MS,
+  AUTO_PULL_VISIBILITY_COOLDOWN_MS,
+  type CloudSyncStatus,
   type CloudAuthSession,
   type FirebaseConfig,
   type MarketDataProvider,
@@ -119,6 +123,12 @@ export function App() {
   );
   const [isSyncing, setIsSyncing] = useState(false);
   const [cloudSyncError, setCloudSyncError] = useState<string | null>(null);
+  const [isHydrated, setIsHydrated] = useState(false);
+  const isHydratedRef = useRef(false);
+  const [isDirty, setIsDirty] = useState(false);
+  const lastSyncedHashRef = useRef<string | null>(null);
+  const lastSyncEpochMsRef = useRef<number>(Date.now());
+  const autoSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const {
     repo,
@@ -212,6 +222,12 @@ export function App() {
         hydratedPrefs.activeTicker,
       ];
       await marketStore.getState().refreshQuotes(initialTickers);
+
+      setIsHydrated(true);
+      isHydratedRef.current = true;
+      if (authSession) {
+        setTimeout(() => void handleSyncNow(), 100);
+      }
     })();
   }, [
     marketStore,
@@ -220,6 +236,7 @@ export function App() {
     preferencesStore,
     initialMode,
     initialEnvKey,
+    authSession,
   ]);
 
   // Minimalist Keyboard-First Workflow Shortcuts
@@ -400,6 +417,11 @@ export function App() {
     [watchlists, annotations, savedPreferences]
   );
 
+  const currentContentHash = useMemo(
+    () => computeWorkspaceContentHash(currentSnapshot),
+    [currentSnapshot]
+  );
+
   const workspaceBytes = useMemo(() => {
     try {
       const json = serializeWorkspaceBackup(currentSnapshot);
@@ -422,7 +444,77 @@ export function App() {
     [watchlists.length, annotations.length, savedPreferences.deletedIds]
   );
 
-  // Milestone 12 Cloud Sync Handlers
+  // Debounced auto-sync to cloud vault on domain edits
+  useEffect(() => {
+    if (!authSession || !isHydrated) return;
+
+    if (
+      lastSyncedHashRef.current !== null &&
+      currentContentHash !== lastSyncedHashRef.current
+    ) {
+      setIsDirty(true);
+
+      if (autoSyncTimerRef.current) {
+        clearTimeout(autoSyncTimerRef.current);
+      }
+
+      autoSyncTimerRef.current = setTimeout(() => {
+        void handleSyncNow();
+      }, AUTO_SYNC_DEBOUNCE_MS);
+    } else if (
+      lastSyncedHashRef.current !== null &&
+      currentContentHash === lastSyncedHashRef.current
+    ) {
+      setIsDirty(false);
+      if (autoSyncTimerRef.current) {
+        clearTimeout(autoSyncTimerRef.current);
+        autoSyncTimerRef.current = null;
+      }
+    }
+
+    return () => {
+      if (autoSyncTimerRef.current) {
+        clearTimeout(autoSyncTimerRef.current);
+      }
+    };
+  }, [currentContentHash, authSession, isHydrated]);
+
+  // Gmail-style beforeunload warning if closing tab with unsaved edits
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (authSession && (isDirty || isSyncing)) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [authSession, isDirty, isSyncing]);
+
+  // Tab wake / visibility auto-pull
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (
+        document.visibilityState === 'visible' &&
+        authSession &&
+        !isSyncing &&
+        !isDirty &&
+        Date.now() - lastSyncEpochMsRef.current > AUTO_PULL_VISIBILITY_COOLDOWN_MS
+      ) {
+        void handleSyncNow();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [authSession, isSyncing, isDirty]);
+
+  // Milestone 12 & 13 Cloud Sync Handlers
   const handleSyncNow = async (
     sessionOverride?: CloudAuthSession,
     configOverride?: FirebaseConfig
@@ -483,6 +575,7 @@ export function App() {
       };
 
       let finalToPush: WorkspaceBackup;
+      let shouldPush = true;
       if (remote) {
         // 3. Multi-device merge with deletion tombstones & anti-bombing quotas
         finalToPush = mergeWorkspaceSnapshots(local, remote);
@@ -522,16 +615,40 @@ export function App() {
             await marketStore.getState().setActiveTimeframe(syncedPrefs.activeTimeframe);
           }
         }
+
+        // Smart Read-Only Short-Circuit:
+        // If the merged snapshot matches the remote snapshot content,
+        // remote already contains this device's state. Skip Firestore write.
+        const mergedHash = computeWorkspaceContentHash(finalToPush);
+        const remoteHash = computeWorkspaceContentHash(remote);
+        if (mergedHash === remoteHash) {
+          shouldPush = false;
+        }
       } else {
         finalToPush = garbageCollectWorkspace(local);
       }
 
       setFocusRevision((rev) => rev + 1);
 
-      // 5. Push final merged payload to Firestore
-      const res = await client.pushWorkspace(currentSession, finalToPush);
+      let syncedAt = Math.floor(Date.now() / 1000);
+      if (shouldPush) {
+        // 5. Push final merged payload to Firestore
+        const res = await client.pushWorkspace(currentSession, finalToPush);
+        syncedAt = res.syncedAt;
+      }
+
+      const cleanFinal = garbageCollectWorkspace(finalToPush);
+      lastSyncedHashRef.current = computeWorkspaceContentHash(cleanFinal);
+      lastSyncEpochMsRef.current = Date.now();
+      setIsDirty(false);
+
+      if (autoSyncTimerRef.current) {
+        clearTimeout(autoSyncTimerRef.current);
+        autoSyncTimerRef.current = null;
+      }
+
       await preferencesStore.getState().updatePreferences({
-        lastCloudSyncTimestamp: res.syncedAt,
+        lastCloudSyncTimestamp: syncedAt,
       });
     } catch (err) {
       setCloudSyncError(err instanceof Error ? err.message : String(err));
@@ -592,6 +709,12 @@ export function App() {
   const handleSignOutCloud = () => {
     setAuthSession(null);
     saveStoredAuthSession(null);
+    lastSyncedHashRef.current = null;
+    setIsDirty(false);
+    if (autoSyncTimerRef.current) {
+      clearTimeout(autoSyncTimerRef.current);
+      autoSyncTimerRef.current = null;
+    }
     void preferencesStore.getState().updatePreferences({
       cloudSyncEmail: '',
       cloudSyncUid: '',
@@ -615,6 +738,12 @@ export function App() {
     });
 
     await client.deleteWorkspaceVault(authSession);
+    lastSyncedHashRef.current = null;
+    setIsDirty(false);
+    if (autoSyncTimerRef.current) {
+      clearTimeout(autoSyncTimerRef.current);
+      autoSyncTimerRef.current = null;
+    }
     await preferencesStore.getState().updatePreferences({
       lastCloudSyncTimestamp: null,
     });
@@ -659,6 +788,14 @@ export function App() {
     }
   };
 
+  const syncStatus: CloudSyncStatus = useMemo(() => {
+    if (!authSession) return 'offline';
+    if (cloudSyncError) return 'error';
+    if (isSyncing) return 'syncing';
+    if (isDirty) return 'dirty';
+    return 'synced';
+  }, [authSession, cloudSyncError, isSyncing, isDirty]);
+
   return (
     <div className="relative flex h-screen w-screen flex-col overflow-hidden bg-slate-950 text-slate-100">
       <TopHeaderBar
@@ -678,6 +815,8 @@ export function App() {
         cloudAuthSession={authSession}
         isSyncing={isSyncing}
         cloudSyncError={cloudSyncError}
+        syncStatus={syncStatus}
+        isDirty={isDirty}
         workspaceBytes={workspaceBytes}
         entityCounts={entityCounts}
         userPreferences={savedPreferences}

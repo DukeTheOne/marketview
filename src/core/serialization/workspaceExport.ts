@@ -358,6 +358,102 @@ export function parseWorkspaceBackup(jsonString: string): WorkspaceBackup {
   }
 }
 
+/**
+ * Computes an FNV-1a 32-bit hash string for an input string.
+ */
+function computeFnv1aHash(str: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16);
+}
+
+/**
+ * Computes a deterministic FNV-1a hex hash of the domain content of a WorkspaceBackup,
+ * ignoring volatile metadata (`exportedAt`, `preferences.lastCloudSyncTimestamp`).
+ * Used to detect true dirty state (`isDirty`) and skip redundant Firestore PATCH writes.
+ */
+export function computeWorkspaceContentHash(snapshot: WorkspaceBackup): string {
+  const normalized = {
+    version: snapshot.version,
+    watchlists: snapshot.watchlists
+      .map((w) => ({
+        id: w.id,
+        name: w.name,
+        tickers: w.tickers,
+        createdAt: w.createdAt,
+        updatedAt: w.updatedAt,
+      }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+    annotations: snapshot.annotations
+      .map((a) => ({
+        id: a.id,
+        ticker: a.ticker,
+        type: a.type,
+        anchors: a.anchors,
+        payload: a.payload,
+        createdAt: a.createdAt,
+        updatedAt: a.updatedAt,
+      }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+    trades: snapshot.trades
+      .map((t) => ({
+        id: t.id,
+        ticker: t.ticker,
+        side: t.side,
+        status: t.status,
+        entryPrice: t.entryPrice,
+        exitPrice: t.exitPrice,
+        quantity: t.quantity,
+        entryTimestamp: t.entryTimestamp,
+        exitTimestamp: t.exitTimestamp,
+        stopLossPrice: t.stopLossPrice,
+        takeProfitPrice: t.takeProfitPrice,
+        setupTags: t.setupTags,
+        notesMarkdown: t.notesMarkdown,
+        createdAt: t.createdAt,
+        updatedAt: t.updatedAt,
+      }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+    alerts: (snapshot.alerts ?? [])
+      .map((al) => ({
+        id: al.id,
+        ticker: al.ticker,
+        targetPrice: al.targetPrice,
+        condition: al.condition,
+        note: al.note,
+        createdAt: al.createdAt,
+        triggeredAt: al.triggeredAt,
+        status: al.status,
+      }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+    deletedIds: Object.keys(snapshot.deletedIds ?? {})
+      .sort()
+      .reduce<Record<string, number>>((acc, key) => {
+        acc[key] = snapshot.deletedIds[key]!;
+        return acc;
+      }, {}),
+    preferences: snapshot.preferences
+      ? {
+          activeTicker: snapshot.preferences.activeTicker,
+          activeTimeframe: snapshot.preferences.activeTimeframe,
+          activeWatchlistId: snapshot.preferences.activeWatchlistId,
+          providerMode: snapshot.preferences.providerMode,
+          finnhubApiKey: snapshot.preferences.finnhubApiKey,
+          firebaseApiKey: snapshot.preferences.firebaseApiKey,
+          firebaseProjectId: snapshot.preferences.firebaseProjectId,
+          pollIntervalSec: snapshot.preferences.pollIntervalSec,
+          activeIndicators: snapshot.preferences.activeIndicators,
+          isSidebarCollapsed: snapshot.preferences.isSidebarCollapsed,
+        }
+      : undefined,
+  };
+
+  return computeFnv1aHash(JSON.stringify(normalized));
+}
+
 function escapeCsvCell(value: string): string {
   if (
     value.includes(',') ||

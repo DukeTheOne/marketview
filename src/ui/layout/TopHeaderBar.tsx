@@ -33,6 +33,7 @@ import {
 } from '../sync/CloudSyncPopover';
 import type {
   CloudAuthSession,
+  CloudSyncStatus,
   FirebaseConfig,
 } from '../../core/sync/firebaseSync';
 import {
@@ -85,11 +86,13 @@ export interface TopHeaderBarProps {
   isSidebarCollapsed?: boolean;
   onToggleSidebar?: () => void;
 
-  // Milestone 12: Zero-Cost Cloud Sync & Vault
+  // Milestone 12 & 13: Zero-Cost Cloud Sync & Smart Auto-Sync
   showSync?: boolean;
   cloudAuthSession?: CloudAuthSession | null;
   isSyncing?: boolean;
   cloudSyncError?: string | null;
+  syncStatus?: CloudSyncStatus;
+  isDirty?: boolean;
   workspaceBytes?: number;
   entityCounts?: EntityCounts;
   userPreferences?: UserPreferences;
@@ -128,6 +131,8 @@ export function TopHeaderBar({
   cloudAuthSession = null,
   isSyncing = false,
   cloudSyncError = null,
+  syncStatus,
+  isDirty = false,
   workspaceBytes = 0,
   entityCounts,
   userPreferences,
@@ -458,68 +463,116 @@ export function TopHeaderBar({
           {/* Milestone 12: Cloud Sync Button & Popover */}
           {showSync && (
             <div className="relative z-50">
-              <button
-                type="button"
-                data-testid="cloud-sync-btn"
-                onClick={() => {
-                  setIsSyncOpen((prev) => !prev);
-                  setIsAlertsOpen(false);
-                  setIsProviderSettingsOpen(false);
-                  setIsShortcutsOpen(false);
-                }}
-                title={
-                  cloudAuthSession
-                    ? `Cloud Vault Connected (${cloudAuthSession.email})`
-                    : 'Cloud Sync & Vault (Guest Mode)'
-                }
-                className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
-                  isSyncOpen
-                    ? 'border-emerald-500 bg-emerald-500/15 text-emerald-300'
-                    : cloudAuthSession
-                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
-                    : 'border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700 hover:text-slate-200'
-                }`}
-              >
-                {isSyncing ? (
-                  <RefreshCw className="h-3.5 w-3.5 animate-spin text-emerald-400" />
-                ) : cloudAuthSession ? (
-                  <Cloud className="h-3.5 w-3.5 text-emerald-400" />
-                ) : (
-                  <CloudOff className="h-3.5 w-3.5 text-slate-500" />
-                )}
-                <span className="hidden sm:inline">Sync</span>
-                {cloudAuthSession && (
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                )}
-              </button>
+              {(() => {
+                const effectiveSyncStatus: CloudSyncStatus =
+                  syncStatus ??
+                  (!cloudAuthSession
+                    ? 'offline'
+                    : cloudSyncError
+                    ? 'error'
+                    : isSyncing
+                    ? 'syncing'
+                    : isDirty
+                    ? 'dirty'
+                    : 'synced');
 
-              <CloudSyncPopover
-                isOpen={isSyncOpen}
-                onClose={() => setIsSyncOpen(false)}
-                authSession={cloudAuthSession}
-                preferences={userPreferences ?? DEFAULT_USER_PREFERENCES}
-                currentWorkspaceBytes={workspaceBytes}
-                entityCounts={
-                  entityCounts ?? {
-                    watchlists: 0,
-                    annotations: 0,
-                    trades: 0,
-                    alerts: 0,
-                    tombstones: 0,
-                  }
-                }
-                isSyncing={isSyncing}
-                syncError={cloudSyncError}
-                onSignIn={onSignInCloud ?? (async () => {})}
-                onSignUp={onSignUpCloud ?? (async () => {})}
-                onSignInWithGoogle={onSignInWithGoogle}
-                onSignOut={onSignOutCloud ?? (() => {})}
-                onSyncNow={onSyncNow ?? (async () => {})}
-                onDeleteCloudVault={onDeleteCloudVault ?? (async () => {})}
-                onExportLocalJson={onExportLocalJson ?? (() => {})}
-                onImportLocalJson={onImportLocalJson ?? (async () => {})}
-                onUpdateFirebaseConfig={onUpdateFirebaseConfig ?? (() => {})}
-              />
+                const syncBtnStyle = isSyncOpen
+                  ? 'border-emerald-500 bg-emerald-500/15 text-emerald-300'
+                  : effectiveSyncStatus === 'dirty'
+                  ? 'border-amber-500/50 bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30'
+                  : effectiveSyncStatus === 'error'
+                  ? 'border-rose-500/50 bg-rose-500/10 text-rose-300'
+                  : effectiveSyncStatus === 'syncing'
+                  ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-300'
+                  : effectiveSyncStatus === 'synced'
+                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
+                  : 'border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700 hover:text-slate-200';
+
+                const syncBtnTitle =
+                  effectiveSyncStatus === 'dirty'
+                    ? 'Unsaved changes — auto-syncing in 3.5s (or click to sync now)'
+                    : effectiveSyncStatus === 'syncing'
+                    ? 'Syncing changes with cloud vault...'
+                    : effectiveSyncStatus === 'error'
+                    ? `Sync error: ${cloudSyncError}`
+                    : cloudAuthSession
+                    ? `Cloud Vault Connected (${cloudAuthSession.email})`
+                    : 'Cloud Sync & Vault (Guest Mode)';
+
+                return (
+                  <>
+                    <button
+                      type="button"
+                      data-testid="cloud-sync-btn"
+                      onClick={() => {
+                        setIsSyncOpen((prev) => !prev);
+                        setIsAlertsOpen(false);
+                        setIsProviderSettingsOpen(false);
+                        setIsShortcutsOpen(false);
+                      }}
+                      title={syncBtnTitle}
+                      className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${syncBtnStyle}`}
+                    >
+                      {effectiveSyncStatus === 'syncing' ? (
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin text-emerald-400" />
+                      ) : effectiveSyncStatus === 'dirty' ? (
+                        <Cloud className="h-3.5 w-3.5 text-amber-400" />
+                      ) : effectiveSyncStatus === 'error' ? (
+                        <Cloud className="h-3.5 w-3.5 text-rose-400" />
+                      ) : cloudAuthSession ? (
+                        <Cloud className="h-3.5 w-3.5 text-emerald-400" />
+                      ) : (
+                        <CloudOff className="h-3.5 w-3.5 text-slate-500" />
+                      )}
+                      <span className="hidden sm:inline">
+                        {effectiveSyncStatus === 'dirty' ? 'Unsaved' : 'Sync'}
+                      </span>
+                      {effectiveSyncStatus === 'dirty' && (
+                        <span className="relative flex h-2 w-2">
+                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
+                          <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" />
+                        </span>
+                      )}
+                      {effectiveSyncStatus === 'synced' && (
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                      )}
+                      {effectiveSyncStatus === 'error' && (
+                        <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
+                      )}
+                    </button>
+
+                    <CloudSyncPopover
+                      isOpen={isSyncOpen}
+                      onClose={() => setIsSyncOpen(false)}
+                      authSession={cloudAuthSession}
+                      preferences={userPreferences ?? DEFAULT_USER_PREFERENCES}
+                      currentWorkspaceBytes={workspaceBytes}
+                      entityCounts={
+                        entityCounts ?? {
+                          watchlists: 0,
+                          annotations: 0,
+                          trades: 0,
+                          alerts: 0,
+                          tombstones: 0,
+                        }
+                      }
+                      isSyncing={isSyncing}
+                      syncError={cloudSyncError}
+                      syncStatus={effectiveSyncStatus}
+                      isDirty={isDirty || effectiveSyncStatus === 'dirty'}
+                      onSignIn={onSignInCloud ?? (async () => {})}
+                      onSignUp={onSignUpCloud ?? (async () => {})}
+                      onSignInWithGoogle={onSignInWithGoogle}
+                      onSignOut={onSignOutCloud ?? (() => {})}
+                      onSyncNow={onSyncNow ?? (async () => {})}
+                      onDeleteCloudVault={onDeleteCloudVault ?? (async () => {})}
+                      onExportLocalJson={onExportLocalJson ?? (() => {})}
+                      onImportLocalJson={onImportLocalJson ?? (async () => {})}
+                      onUpdateFirebaseConfig={onUpdateFirebaseConfig ?? (() => {})}
+                    />
+                  </>
+                );
+              })()}
             </div>
           )}
 

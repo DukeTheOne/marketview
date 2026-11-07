@@ -29,6 +29,7 @@ import {
   DEFAULT_FIREBASE_CONFIG,
   type FirebaseConfig,
   type CloudAuthSession,
+  type CloudSyncStatus,
 } from '../../core/sync/firebaseSync';
 import type { UserPreferences } from '../../core/schemas/preferences';
 import { preloadGoogleAuthSdk } from './googlePopupAuth';
@@ -50,6 +51,8 @@ export interface CloudSyncPopoverProps {
   entityCounts: EntityCounts;
   isSyncing: boolean;
   syncError: string | null;
+  syncStatus?: CloudSyncStatus;
+  isDirty?: boolean;
   onSignIn: (email: string, pass: string, config: FirebaseConfig) => Promise<void>;
   onSignUp: (email: string, pass: string, config: FirebaseConfig) => Promise<void>;
   onSignInWithGoogle?: (config: FirebaseConfig) => Promise<void>;
@@ -70,6 +73,8 @@ export function CloudSyncPopover({
   entityCounts,
   isSyncing,
   syncError,
+  syncStatus,
+  isDirty = false,
   onSignIn,
   onSignUp,
   onSignInWithGoogle,
@@ -237,11 +242,19 @@ export function CloudSyncPopover({
           <span
             className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold ${
               authSession
-                ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                ? isDirty || syncStatus === 'dirty'
+                  ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                  : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
                 : 'bg-slate-800 text-slate-400'
             }`}
           >
-            {authSession ? 'Connected' : 'Guest (Offline)'}
+            {authSession
+              ? isSyncing || syncStatus === 'syncing'
+                ? 'Syncing...'
+                : isDirty || syncStatus === 'dirty'
+                ? 'Unsaved Edits'
+                : 'Connected'
+              : 'Guest (Offline)'}
           </span>
         </div>
         <button
@@ -361,6 +374,17 @@ export function CloudSyncPopover({
               </div>
             </div>
 
+            {/* Live Dirty Auto-Sync Notice */}
+            {isDirty && !isSyncing && (
+              <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+                <span className="relative flex h-2 w-2 shrink-0">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" />
+                </span>
+                <span>Unsaved local changes — auto-syncing in 3.5s...</span>
+              </div>
+            )}
+
             {/* Sync Now Action */}
             <div className="space-y-1.5">
               <button
@@ -373,7 +397,13 @@ export function CloudSyncPopover({
                 <RefreshCw
                   className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin' : ''}`}
                 />
-                <span>{isSyncing ? 'Syncing...' : 'Sync Now'}</span>
+                <span>
+                  {isSyncing
+                    ? 'Syncing...'
+                    : isDirty
+                    ? 'Sync Now (Push Pending Changes)'
+                    : 'Sync Now'}
+                </span>
               </button>
               <div className="flex justify-between px-1 text-[11px] text-slate-500">
                 <span>Last Cloud Sync:</span>

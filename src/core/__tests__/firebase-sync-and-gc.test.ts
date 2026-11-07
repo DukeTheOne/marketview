@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
+  computeWorkspaceContentHash,
   garbageCollectWorkspace,
   mergeWorkspaceSnapshots,
   WORKSPACE_QUOTAS,
@@ -532,6 +533,144 @@ describe('Milestone 12: Anti-Bombing Quotas, Garbage Collection & Multi-Device S
       expect(fetchSpy.mock.calls[1]?.[0]).toContain(
         'updateMask.fieldPaths=payloadJson&updateMask.fieldPaths=updatedAt&updateMask.fieldPaths=byteLength&updateMask.fieldPaths=version'
       );
+    });
+  });
+
+  describe('Milestone 13: computeWorkspaceContentHash & Smart Deduplication', () => {
+    it('computes identical content hash regardless of exportedAt or preferences.lastCloudSyncTimestamp', () => {
+      const snap1: WorkspaceBackup = {
+        version: 1,
+        exportedAt: 1711900000,
+        watchlists: [mockWatchlist('wl-1')],
+        annotations: [mockAnnotation('ann-1')],
+        trades: [mockTrade('tr-1')],
+        alerts: [],
+        deletedIds: { 'old-1': 1711800000 },
+        preferences: {
+          activeTicker: 'AAPL',
+          activeTimeframe: '1D',
+          activeWatchlistId: 'wl-1',
+          providerMode: 'demo',
+          finnhubApiKey: '',
+          pollIntervalSec: 15,
+          activeIndicators: ['CANDLES'],
+          isSidebarCollapsed: false,
+          firebaseApiKey: 'key-123',
+          firebaseProjectId: 'proj-123',
+          deletedIds: {},
+          cloudSyncEmail: 'user@example.com',
+          cloudSyncUid: 'uid-123',
+          lastCloudSyncTimestamp: 1711899999,
+        },
+      };
+
+      const snap2: WorkspaceBackup = {
+        version: 1,
+        exportedAt: 1712000000, // Later export time
+        watchlists: [mockWatchlist('wl-1')],
+        annotations: [mockAnnotation('ann-1')],
+        trades: [mockTrade('tr-1')],
+        alerts: [],
+        deletedIds: { 'old-1': 1711800000 },
+        preferences: {
+          activeTicker: 'AAPL',
+          activeTimeframe: '1D',
+          activeWatchlistId: 'wl-1',
+          providerMode: 'demo',
+          finnhubApiKey: '',
+          pollIntervalSec: 15,
+          activeIndicators: ['CANDLES'],
+          isSidebarCollapsed: false,
+          firebaseApiKey: 'key-123',
+          firebaseProjectId: 'proj-123',
+          deletedIds: {},
+          cloudSyncEmail: 'user@example.com',
+          cloudSyncUid: 'uid-123',
+          lastCloudSyncTimestamp: 1712000000, // Updated sync time
+        },
+      };
+
+      const hash1 = computeWorkspaceContentHash(snap1);
+      const hash2 = computeWorkspaceContentHash(snap2);
+
+      expect(hash1).toBe(hash2);
+      expect(typeof hash1).toBe('string');
+      expect(hash1.length).toBeGreaterThan(0);
+    });
+
+    it('computes different content hash when domain entities or anchors change', () => {
+      const baseSnap: WorkspaceBackup = {
+        version: 1,
+        exportedAt: 1711900000,
+        watchlists: [mockWatchlist('wl-1')],
+        annotations: [mockAnnotation('ann-1')],
+        trades: [mockTrade('tr-1')],
+        alerts: [],
+        deletedIds: {},
+      };
+
+      const modifiedSnap: WorkspaceBackup = {
+        ...baseSnap,
+        annotations: [
+          {
+            ...mockAnnotation('ann-1'),
+            anchors: [{ timestamp: 1711800000, price: 185.0 }], // Modified price
+          },
+        ],
+      };
+
+      expect(computeWorkspaceContentHash(baseSnap)).not.toBe(
+        computeWorkspaceContentHash(modifiedSnap)
+      );
+    });
+
+    it('deduplicates pushWorkspace when content hash matches even if exportedAt changes', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => '{}',
+        } as unknown as Response;
+      });
+
+      const client = new FirebaseSyncClient(
+        { apiKey: 'test-api-key', projectId: 'test-project-id' },
+        { minCooldownMs: 0 }
+      );
+
+      const session: CloudAuthSession = {
+        uid: 'user-123',
+        email: 'user@example.com',
+        idToken: 'token-abc',
+        refreshToken: 'refresh-abc',
+        expiresAtMs: Date.now() + 3600000,
+      };
+
+      const backup1: WorkspaceBackup = {
+        version: 1,
+        exportedAt: 1711900000,
+        watchlists: [mockWatchlist('wl-1')],
+        annotations: [],
+        trades: [],
+        alerts: [],
+        deletedIds: {},
+      };
+
+      // First push executes HTTP PATCH
+      const res1 = await client.pushWorkspace(session, backup1);
+      expect(res1.skipped).toBe(false);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+      // Second push has different exportedAt but identical content
+      const backup2: WorkspaceBackup = {
+        ...backup1,
+        exportedAt: 1711909999,
+      };
+
+      const res2 = await client.pushWorkspace(session, backup2);
+      expect(res2.skipped).toBe(true);
+      // HTTP PATCH should NOT have been called a second time
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
     });
   });
 });

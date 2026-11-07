@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   WORKSPACE_QUOTAS,
   WorkspaceBackupSchema,
+  computeWorkspaceContentHash,
   garbageCollectWorkspace,
   serializeWorkspaceBackup,
   type WorkspaceBackup,
@@ -34,15 +35,15 @@ export interface CloudSyncResult {
 }
 
 export const MIN_SYNC_COOLDOWN_MS = 5_000;
+export const AUTO_SYNC_DEBOUNCE_MS = 3_500;
+export const AUTO_PULL_VISIBILITY_COOLDOWN_MS = 60_000;
 
-function computeStringHash(str: string): string {
-  let hash = 2166136261;
-  for (let i = 0; i < str.length; i++) {
-    hash ^= str.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(16);
-}
+export type CloudSyncStatus =
+  | 'offline'
+  | 'synced'
+  | 'dirty'
+  | 'syncing'
+  | 'error';
 
 function computeUtf8ByteLength(str: string): number {
   if (typeof TextEncoder !== 'undefined') {
@@ -332,7 +333,7 @@ export class FirebaseSyncClient {
       );
     }
 
-    const contentHash = computeStringHash(serialized);
+    const contentHash = computeWorkspaceContentHash(cleanSnapshot);
     const now = Date.now();
 
     // Skip redundant push if payload is unchanged
