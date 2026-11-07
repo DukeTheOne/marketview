@@ -563,6 +563,7 @@ export function App() {
       const remote = await client.pullWorkspace(currentSession);
 
       // 2. Current local snapshot
+      const wasFreshDevice = !preferencesStore.getState().preferences.lastCloudSyncTimestamp;
       const local: WorkspaceBackup = {
         version: 1,
         exportedAt: Math.floor(Date.now() / 1000),
@@ -606,13 +607,18 @@ export function App() {
               syncedPrefs.finnhubApiKey
             );
             await marketStore.getState().setProvider(restoredProvider);
+            setFocusRevision((rev) => rev + 1);
           }
 
-          if (syncedPrefs.activeTicker && syncedPrefs.activeTicker !== activeTicker) {
-            await marketStore.getState().setActiveTicker(syncedPrefs.activeTicker);
-          }
-          if (syncedPrefs.activeTimeframe && syncedPrefs.activeTimeframe !== activeTimeframe) {
-            await marketStore.getState().setActiveTimeframe(syncedPrefs.activeTimeframe);
+          // Only adopt remote active ticker/timeframe if this is a fresh device
+          if (wasFreshDevice) {
+            if (syncedPrefs.activeTicker && syncedPrefs.activeTicker !== activeTicker) {
+              await marketStore.getState().setActiveTicker(syncedPrefs.activeTicker);
+            }
+            if (syncedPrefs.activeTimeframe && syncedPrefs.activeTimeframe !== activeTimeframe) {
+              await marketStore.getState().setActiveTimeframe(syncedPrefs.activeTimeframe);
+            }
+            setFocusRevision((rev) => rev + 1);
           }
         }
 
@@ -627,8 +633,6 @@ export function App() {
       } else {
         finalToPush = garbageCollectWorkspace(local);
       }
-
-      setFocusRevision((rev) => rev + 1);
 
       let syncedAt = Math.floor(Date.now() / 1000);
       if (shouldPush) {

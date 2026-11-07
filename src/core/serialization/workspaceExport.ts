@@ -274,11 +274,12 @@ export function mergeWorkspaceSnapshots(
   if (remote.preferences) {
     const localHasApiKey = Boolean(local.preferences?.finnhubApiKey?.trim());
     const remoteHasApiKey = Boolean(remote.preferences.finnhubApiKey?.trim());
+    const hasSyncedBefore = Boolean(local.preferences?.lastCloudSyncTimestamp);
     const isLocalFreshDefault =
       !local.preferences ||
       (!localHasApiKey &&
         local.preferences.providerMode === 'yahoo' &&
-        !local.preferences.lastCloudSyncTimestamp);
+        !hasSyncedBefore);
 
     if (
       !local.preferences ||
@@ -288,6 +289,14 @@ export function mergeWorkspaceSnapshots(
     ) {
       mergedPreferences = {
         ...remote.preferences,
+        ...(local.preferences && hasSyncedBefore
+          ? {
+              activeTicker: local.preferences.activeTicker,
+              activeTimeframe: local.preferences.activeTimeframe,
+              activeWatchlistId: local.preferences.activeWatchlistId,
+              isSidebarCollapsed: local.preferences.isSidebarCollapsed,
+            }
+          : {}),
         finnhubApiKey:
           local.preferences?.finnhubApiKey ||
           remote.preferences.finnhubApiKey ||
@@ -372,7 +381,8 @@ function computeFnv1aHash(str: string): string {
 
 /**
  * Computes a deterministic FNV-1a hex hash of the domain content of a WorkspaceBackup,
- * ignoring volatile metadata (`exportedAt`, `preferences.lastCloudSyncTimestamp`).
+ * ignoring volatile metadata (`exportedAt`, `preferences.lastCloudSyncTimestamp`)
+ * and ephemeral viewport navigation fields (`activeTicker`, `activeTimeframe`, `activeWatchlistId`, `isSidebarCollapsed`).
  * Used to detect true dirty state (`isDirty`) and skip redundant Firestore PATCH writes.
  */
 export function computeWorkspaceContentHash(snapshot: WorkspaceBackup): string {
@@ -435,18 +445,16 @@ export function computeWorkspaceContentHash(snapshot: WorkspaceBackup): string {
         acc[key] = snapshot.deletedIds[key]!;
         return acc;
       }, {}),
+    // Only hash persistent account & indicator configuration; exclude ephemeral viewport state
+    // (activeTicker, activeTimeframe, activeWatchlistId, isSidebarCollapsed, lastCloudSyncTimestamp)
     preferences: snapshot.preferences
       ? {
-          activeTicker: snapshot.preferences.activeTicker,
-          activeTimeframe: snapshot.preferences.activeTimeframe,
-          activeWatchlistId: snapshot.preferences.activeWatchlistId,
           providerMode: snapshot.preferences.providerMode,
           finnhubApiKey: snapshot.preferences.finnhubApiKey,
           firebaseApiKey: snapshot.preferences.firebaseApiKey,
           firebaseProjectId: snapshot.preferences.firebaseProjectId,
           pollIntervalSec: snapshot.preferences.pollIntervalSec,
           activeIndicators: snapshot.preferences.activeIndicators,
-          isSidebarCollapsed: snapshot.preferences.isSidebarCollapsed,
         }
       : undefined,
   };

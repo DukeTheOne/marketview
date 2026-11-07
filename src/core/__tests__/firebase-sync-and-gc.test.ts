@@ -368,6 +368,72 @@ describe('Milestone 12: Anti-Bombing Quotas, Garbage Collection & Multi-Device S
       expect(merged.preferences?.activeTicker).toBe('NVDA');
       expect(merged.preferences?.isSidebarCollapsed).toBe(true);
     });
+
+    it('preserves local activeTicker and activeTimeframe on initialized devices when merging a newer remote snapshot', () => {
+      const nowSec = baseTimestamp;
+      const localInitialized: WorkspaceBackup = {
+        version: 1,
+        exportedAt: nowSec,
+        watchlists: [],
+        annotations: [],
+        trades: [],
+        alerts: [],
+        deletedIds: {},
+        preferences: {
+          activeTicker: 'AAPL',
+          activeTimeframe: '15m',
+          activeWatchlistId: 'wl-default',
+          providerMode: 'finnhub',
+          finnhubApiKey: 'my-key',
+          pollIntervalSec: 15,
+          activeIndicators: ['CANDLES'],
+          isSidebarCollapsed: false,
+          firebaseApiKey: 'fb-key',
+          firebaseProjectId: 'fb-proj',
+          deletedIds: {},
+          cloudSyncEmail: 'user@example.com',
+          cloudSyncUid: 'uid-123',
+          lastCloudSyncTimestamp: nowSec - 500, // Device has synced before!
+        },
+      };
+
+      const remoteCloudVault: WorkspaceBackup = {
+        version: 1,
+        exportedAt: nowSec + 100, // Newer remote export
+        watchlists: [],
+        annotations: [mockAnnotation('remote-ann-2')],
+        trades: [],
+        alerts: [],
+        deletedIds: {},
+        preferences: {
+          activeTicker: 'NVDA', // Remote was looking at NVDA
+          activeTimeframe: '1W',
+          activeWatchlistId: 'wl-remote',
+          providerMode: 'finnhub',
+          finnhubApiKey: 'my-key',
+          pollIntervalSec: 15,
+          activeIndicators: ['CANDLES', 'VOLUME'], // Remote added volume indicator
+          isSidebarCollapsed: true,
+          firebaseApiKey: 'fb-key',
+          firebaseProjectId: 'fb-proj',
+          deletedIds: {},
+          cloudSyncEmail: 'user@example.com',
+          cloudSyncUid: 'uid-123',
+          lastCloudSyncTimestamp: nowSec + 100,
+        },
+      };
+
+      const merged = mergeWorkspaceSnapshots(localInitialized, remoteCloudVault, nowSec + 200);
+      // Remote domain entity was merged
+      expect(merged.annotations).toHaveLength(1);
+      // Remote account preferences were updated
+      expect(merged.preferences?.activeIndicators).toEqual(['CANDLES', 'VOLUME']);
+      // Local ephemeral viewport navigation was preserved!
+      expect(merged.preferences?.activeTicker).toBe('AAPL');
+      expect(merged.preferences?.activeTimeframe).toBe('15m');
+      expect(merged.preferences?.activeWatchlistId).toBe('wl-default');
+      expect(merged.preferences?.isSidebarCollapsed).toBe(false);
+    });
   });
 
   describe('FirebaseSyncClient', () => {
@@ -671,6 +737,90 @@ describe('Milestone 12: Anti-Bombing Quotas, Garbage Collection & Multi-Device S
       expect(res2.skipped).toBe(true);
       // HTTP PATCH should NOT have been called a second time
       expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('computes identical content hash when ephemeral viewport state (activeTicker, activeTimeframe, activeWatchlistId, isSidebarCollapsed) changes', () => {
+      const snap1: WorkspaceBackup = {
+        version: 1,
+        exportedAt: 1711900000,
+        watchlists: [mockWatchlist('wl-1')],
+        annotations: [mockAnnotation('ann-1')],
+        trades: [],
+        alerts: [],
+        deletedIds: {},
+        preferences: {
+          activeTicker: 'AAPL',
+          activeTimeframe: '1D',
+          activeWatchlistId: 'wl-1',
+          providerMode: 'demo',
+          finnhubApiKey: '',
+          pollIntervalSec: 15,
+          activeIndicators: ['CANDLES'],
+          isSidebarCollapsed: false,
+          firebaseApiKey: 'key-123',
+          firebaseProjectId: 'proj-123',
+          deletedIds: {},
+          cloudSyncEmail: 'user@example.com',
+          cloudSyncUid: 'uid-123',
+          lastCloudSyncTimestamp: 1711899999,
+        },
+      };
+
+      const snap2: WorkspaceBackup = {
+        ...snap1,
+        preferences: {
+          ...snap1.preferences!,
+          activeTicker: 'NVDA', // Navigated to different stock
+          activeTimeframe: '15m', // Changed scope
+          activeWatchlistId: 'wl-2', // Switched tab
+          isSidebarCollapsed: true, // Collapsed sidebar
+        },
+      };
+
+      expect(computeWorkspaceContentHash(snap1)).toBe(
+        computeWorkspaceContentHash(snap2)
+      );
+    });
+
+    it('computes different content hash when persistent account preferences change', () => {
+      const snap1: WorkspaceBackup = {
+        version: 1,
+        exportedAt: 1711900000,
+        watchlists: [mockWatchlist('wl-1')],
+        annotations: [mockAnnotation('ann-1')],
+        trades: [],
+        alerts: [],
+        deletedIds: {},
+        preferences: {
+          activeTicker: 'AAPL',
+          activeTimeframe: '1D',
+          activeWatchlistId: 'wl-1',
+          providerMode: 'demo',
+          finnhubApiKey: '',
+          pollIntervalSec: 15,
+          activeIndicators: ['CANDLES'],
+          isSidebarCollapsed: false,
+          firebaseApiKey: 'key-123',
+          firebaseProjectId: 'proj-123',
+          deletedIds: {},
+          cloudSyncEmail: 'user@example.com',
+          cloudSyncUid: 'uid-123',
+          lastCloudSyncTimestamp: 1711899999,
+        },
+      };
+
+      const snap2: WorkspaceBackup = {
+        ...snap1,
+        preferences: {
+          ...snap1.preferences!,
+          providerMode: 'finnhub',
+          finnhubApiKey: 'new-key-123',
+        },
+      };
+
+      expect(computeWorkspaceContentHash(snap1)).not.toBe(
+        computeWorkspaceContentHash(snap2)
+      );
     });
   });
 });
