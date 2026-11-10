@@ -366,6 +366,7 @@ describe('Milestone 12: Anti-Bombing Quotas, Garbage Collection & Multi-Device S
       expect(merged.preferences?.finnhubApiKey).toBe('remote-synced-finnhub-key');
       expect(merged.preferences?.providerMode).toBe('finnhub');
       expect(merged.preferences?.activeTicker).toBe('NVDA');
+      expect(merged.preferences?.activeTimeframe).toBe('1D'); // Not hijacked by remote '1W'
       expect(merged.preferences?.isSidebarCollapsed).toBe(true);
     });
 

@@ -292,13 +292,13 @@ export function mergeWorkspaceSnapshots(
         ...(local.preferences && hasSyncedBefore
           ? {
               activeTicker: local.preferences.activeTicker,
-              activeTimeframe: local.preferences.activeTimeframe,
               activeWatchlistId: local.preferences.activeWatchlistId,
               isSidebarCollapsed: local.preferences.isSidebarCollapsed,
               activeIndicators: local.preferences.activeIndicators,
               pollIntervalSec: local.preferences.pollIntervalSec,
             }
           : {}),
+        activeTimeframe: local.preferences?.activeTimeframe ?? '3M',
         finnhubApiKey:
           local.preferences?.finnhubApiKey ||
           remote.preferences.finnhubApiKey ||

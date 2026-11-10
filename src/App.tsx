@@ -3,6 +3,7 @@ import { useStore } from 'zustand';
 import {
   CachedMarketDataProvider,
   DEFAULT_FIREBASE_CONFIG,
+  DEFAULT_INITIAL_TIMEFRAME,
   DeterministicDemoProvider,
   FinnhubProvider,
   FirebaseSyncClient,
@@ -27,8 +28,10 @@ import {
   type MarketDataProvider,
   type Timeframe,
   type WorkspaceBackup,
+  type WorkspaceViewMode,
 } from './core';
 import { ChartContainer } from './features/chart/ChartContainer';
+import { DailySessionSplitView } from './features/chart/DailySessionSplitView';
 import { ChartToolbar } from './features/chart/overlays/ChartToolbar';
 import { OverlayCanvas } from './features/chart/overlays/OverlayCanvas';
 import { TopHeaderBar } from './ui/layout/TopHeaderBar';
@@ -118,6 +121,7 @@ export function App() {
     initialEnvKey.length > 0 ? 'finnhub' : 'yahoo';
 
   const [focusRevision, setFocusRevision] = useState(0);
+  const [activeViewMode, setActiveViewMode] = useState<WorkspaceViewMode>('historical');
   const [authSession, setAuthSession] = useState<CloudAuthSession | null>(() =>
     loadStoredAuthSession()
   );
@@ -142,7 +146,7 @@ export function App() {
 
     return {
       repo: idbRepo,
-      marketStore: createMarketStore(cachedProvider, 'AAPL', '1D', 365),
+      marketStore: createMarketStore(cachedProvider, 'AAPL', DEFAULT_INITIAL_TIMEFRAME, 365),
       watchlistStore: createWatchlistStore(idbRepo),
       annotationStore: createAnnotationStore(idbRepo),
       preferencesStore: createPreferencesStore(idbRepo, {
@@ -215,7 +219,7 @@ export function App() {
       await marketStore.getState().setActiveTicker(hydratedPrefs.activeTicker);
       await marketStore
         .getState()
-        .setActiveTimeframe(hydratedPrefs.activeTimeframe);
+        .setActiveTimeframe(DEFAULT_INITIAL_TIMEFRAME);
 
       const selectedList =
         hydratedWatchlists.find(
@@ -357,11 +361,13 @@ export function App() {
       const mappedTf = tfMap[e.key];
       if (mappedTf) {
         e.preventDefault();
-        setFocusRevision((rev) => rev + 1);
-        void marketStore.getState().setActiveTimeframe(mappedTf);
-        void preferencesStore
-          .getState()
-          .updatePreferences({ activeTimeframe: mappedTf });
+        if (mappedTf === '1D') {
+          setActiveViewMode('daily_1d');
+        } else {
+          setActiveViewMode('historical');
+          setFocusRevision((rev) => rev + 1);
+          void marketStore.getState().setActiveTimeframe(mappedTf);
+        }
       }
     };
 
@@ -642,15 +648,11 @@ export function App() {
             setFocusRevision((rev) => rev + 1);
           }
 
-          // Only adopt remote active ticker/timeframe if this is a fresh device
+          // Only adopt remote active ticker if this is a fresh device
           if (wasFreshDevice) {
             if (syncedPrefs.activeTicker && syncedPrefs.activeTicker !== activeTicker) {
               await marketStore.getState().setActiveTicker(syncedPrefs.activeTicker);
             }
-            if (syncedPrefs.activeTimeframe && syncedPrefs.activeTimeframe !== activeTimeframe) {
-              await marketStore.getState().setActiveTimeframe(syncedPrefs.activeTimeframe);
-            }
-            setFocusRevision((rev) => rev + 1);
           }
         }
 
@@ -905,14 +907,15 @@ export function App() {
             .updatePreferences({ pollIntervalSec: sec });
         }}
         onSelectTimeframe={(tf) => {
-          setFocusRevision((rev) => rev + 1);
-          void marketStore.getState().setActiveTimeframe(tf);
-          void preferencesStore
-            .getState()
-            .updatePreferences({ activeTimeframe: tf });
+          if (tf === '1D') {
+            setActiveViewMode('daily_1d');
+          } else {
+            setActiveViewMode('historical');
+            setFocusRevision((rev) => rev + 1);
+            void marketStore.getState().setActiveTimeframe(tf);
+          }
         }}
         onRefresh={() => {
-          setFocusRevision((rev) => rev + 1);
           void marketStore.getState().refreshActiveCandles();
           if (activeWatchlist) {
             void marketStore.getState().refreshQuotes(activeWatchlist.tickers);
@@ -947,7 +950,6 @@ export function App() {
           }}
           onAddTicker={async (watchlistId, ticker) => {
             await watchlistStore.getState().addTicker(watchlistId, ticker);
-            setFocusRevision((rev) => rev + 1);
             await marketStore.getState().setActiveTicker(ticker);
             void preferencesStore
               .getState()
@@ -957,7 +959,6 @@ export function App() {
             await watchlistStore.getState().removeTicker(watchlistId, ticker);
           }}
           onSelectTicker={(ticker) => {
-            setFocusRevision((rev) => rev + 1);
             void marketStore.getState().setActiveTicker(ticker);
             void preferencesStore
               .getState()
@@ -966,49 +967,60 @@ export function App() {
           annotationsCountByTicker={annotationsCountByTicker}
         />
 
-        <ChartContainer
-          ticker={activeTicker}
-          timeframe={activeTimeframe}
-          candles={activeCandles}
-          intradayCandles={activeIntradayCandles}
-          isLoading={isLoadingCandles}
-          defaultIndicators={savedPreferences.activeIndicators}
-          focusRevision={focusRevision}
-          renderOverlayLayer={(hostContext) => (
-            <>
-              <ChartToolbar
-                activeTool={activeTool}
-                annotationCount={activeTickerAnnotations.length}
-                showAdvancedTools={false}
-                onSelectTool={(tool) => {
-                  annotationStore.getState().setActiveTool(tool);
-                }}
-              />
-              <OverlayCanvas
-                hostContext={hostContext}
-                annotations={annotations}
-                activeTool={activeTool}
-                selectedAnnotationId={selectedAnnotationId}
-                onSelectTool={(tool) => {
-                  annotationStore.getState().setActiveTool(tool);
-                }}
-                onSelectAnnotation={(id) => {
-                  annotationStore.getState().selectAnnotation(id);
-                }}
-                onAddAnnotation={async (input) => {
-                  await annotationStore.getState().addAnnotation(input);
-                }}
-                onUpdateAnnotation={async (id, updates) => {
-                  await annotationStore.getState().updateAnnotation(id, updates);
-                }}
-                onDeleteAnnotation={async (id) => {
-                  await annotationStore.getState().deleteAnnotation(id);
-                  await preferencesStore.getState().recordTombstone(id);
-                }}
-              />
-            </>
-          )}
-        />
+        {activeViewMode === 'daily_1d' ? (
+          <DailySessionSplitView
+            ticker={activeTicker}
+            dailyCandles={activeCandles}
+            intradayCandles={activeIntradayCandles}
+            quote={activeQuote}
+            isLoading={isLoadingCandles}
+            onBackToHistoricalChart={() => setActiveViewMode('historical')}
+          />
+        ) : (
+          <ChartContainer
+            ticker={activeTicker}
+            timeframe={activeTimeframe}
+            candles={activeCandles}
+            intradayCandles={activeIntradayCandles}
+            isLoading={isLoadingCandles}
+            defaultIndicators={savedPreferences.activeIndicators}
+            focusRevision={focusRevision}
+            renderOverlayLayer={(hostContext) => (
+              <>
+                <ChartToolbar
+                  activeTool={activeTool}
+                  annotationCount={activeTickerAnnotations.length}
+                  showAdvancedTools={false}
+                  onSelectTool={(tool) => {
+                    annotationStore.getState().setActiveTool(tool);
+                  }}
+                />
+                <OverlayCanvas
+                  hostContext={hostContext}
+                  annotations={annotations}
+                  activeTool={activeTool}
+                  selectedAnnotationId={selectedAnnotationId}
+                  onSelectTool={(tool) => {
+                    annotationStore.getState().setActiveTool(tool);
+                  }}
+                  onSelectAnnotation={(id) => {
+                    annotationStore.getState().selectAnnotation(id);
+                  }}
+                  onAddAnnotation={async (input) => {
+                    await annotationStore.getState().addAnnotation(input);
+                  }}
+                  onUpdateAnnotation={async (id, updates) => {
+                    await annotationStore.getState().updateAnnotation(id, updates);
+                  }}
+                  onDeleteAnnotation={async (id) => {
+                    await annotationStore.getState().deleteAnnotation(id);
+                    await preferencesStore.getState().recordTombstone(id);
+                  }}
+                />
+              </>
+            )}
+          />
+        )}
       </main>
     </div>
   );

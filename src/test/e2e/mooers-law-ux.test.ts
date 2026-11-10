@@ -240,6 +240,8 @@ describe("Mooers' Law UX & Keyboard Shortcuts Suite", () => {
             if (hookIndex === 3) return [false, setShortcutsMock]; // isShortcutsOpen
             return [initialValue, vi.fn()];
           },
+          useRef: (initial: unknown) => ({ current: initial }),
+          useEffect: () => {},
         };
       }
 

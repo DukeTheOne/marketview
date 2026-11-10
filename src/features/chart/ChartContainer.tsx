@@ -22,6 +22,7 @@ import {
 } from '../../core/indicators/technicalIndicators';
 import type { LogicalAnchor } from '../../core/schemas/annotation';
 import {
+  computeCarryOverLogicalRange,
   computeTimeframeFocusWindow,
   type OHLCVCandle,
   type Timeframe,
@@ -90,6 +91,15 @@ export function ChartContainer({
     normalizeExclusiveChartStyle(defaultIndicators)
   );
 
+  // Milestone 16: Tracking actual viewing scope and free 2D chart drag state
+  const viewingLogicalRangeRef = useRef<{ from: number; to: number; barCount: number } | null>(null);
+  const sortedCandlesLengthRef = useRef<number>(0);
+  const lastAppliedTickerRef = useRef<string>('');
+  const lastAppliedFocusRevisionRef = useRef<number>(-1);
+  const isApplyingProgrammaticRangeRef = useRef<boolean>(false);
+  const isDraggingChartRef = useRef<boolean>(false);
+  const [isDraggingChart, setIsDraggingChart] = useState<boolean>(false);
+
   const sortedCandles = useMemo(
     () => [...candles].sort((a, b) => a.timestamp - b.timestamp),
     [candles]
@@ -153,6 +163,24 @@ export function ChartContainer({
         borderColor: '#1e293b',
         timeVisible: true,
         secondsVisible: false,
+      },
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: true,
+      },
+      handleScale: {
+        axisPressedMouseMove: {
+          time: true,
+          price: true,
+        },
+        axisDoubleClickReset: {
+          time: true,
+          price: true,
+        },
+        mouseWheel: true,
+        pinch: true,
       },
       width: container.clientWidth || 800,
       height: container.clientHeight || 520,
@@ -228,6 +256,16 @@ export function ChartContainer({
     });
 
     const bumpRevision = () => {
+      if (!isApplyingProgrammaticRangeRef.current && sortedCandlesLengthRef.current > 0) {
+        const range = chart.timeScale().getVisibleLogicalRange?.();
+        if (range && Number.isFinite(range.from) && Number.isFinite(range.to)) {
+          viewingLogicalRangeRef.current = {
+            from: range.from,
+            to: range.to,
+            barCount: sortedCandlesLengthRef.current,
+          };
+        }
+      }
       setViewportRevision((rev) => rev + 1);
     };
 
@@ -291,6 +329,8 @@ export function ChartContainer({
     }
 
     const sorted = sortedCandles;
+    const priorViewingScope = viewingLogicalRangeRef.current;
+    sortedCandlesLengthRef.current = sorted.length;
 
     // Upload full data to all series synchronously
     candleSeries.setData(
@@ -348,53 +388,121 @@ export function ChartContainer({
       }))
     );
 
-    // Focus time range and ensure right Y-axis autoScale
-    const latestClose = sorted[sorted.length - 1]?.close ?? 0;
-    const currentSeriesKey = `${ticker}:${timeframe}:${focusRevision}:${sorted.length}:${latestClose}`;
-    if (sorted.length > 0 && currentSeriesKey !== lastFittedSeriesKeyRef.current) {
-      const focusWindow = computeTimeframeFocusWindow(sorted, timeframe);
+    // Viewport Range Management:
+    // Branch A: Initial Launch or Explicit Time Scope Button Click
+    // Branch B: Stock Switch (preserves actual viewing scope)
+    // Branch C: Same-stock background candle refresh (retains current viewport)
+    const isInitialOrFocusRevision =
+      lastAppliedFocusRevisionRef.current === -1 ||
+      focusRevision !== lastAppliedFocusRevisionRef.current;
+    const isTickerSwitch = !isInitialOrFocusRevision && ticker !== lastAppliedTickerRef.current;
+
+    if (sorted.length > 0) {
       const timeScale = chart.timeScale();
 
-      // Reset price scale auto-scaling first in case the user previously dragged/locked the Y-axis
-      chart.applyOptions({
-        rightPriceScale: {
-          autoScale: true,
-        },
-      });
-      candleSeries.priceScale?.().applyOptions?.({ autoScale: true });
-      chart.priceScale?.('right')?.applyOptions?.({ autoScale: true });
+      if (isInitialOrFocusRevision) {
+        // Branch A: Initial Launch or Explicit Scope Click
+        const focusWindow = computeTimeframeFocusWindow(sorted, timeframe);
 
-      if (focusWindow) {
-        const fromIndex = Math.max(
-          0,
-          sorted.findIndex((c) => c.timestamp >= focusWindow.from)
-        );
-        const toIndex = Math.max(fromIndex, sorted.length - 1);
-        if (typeof timeScale.setVisibleLogicalRange === 'function') {
-          timeScale.setVisibleLogicalRange({
+        // Reset price scale auto-scaling first
+        chart.applyOptions({
+          rightPriceScale: {
+            autoScale: true,
+          },
+        });
+        candleSeries.priceScale?.().applyOptions?.({ autoScale: true });
+        chart.priceScale?.('right')?.applyOptions?.({ autoScale: true });
+
+        if (focusWindow) {
+          const fromIndex = Math.max(
+            0,
+            sorted.findIndex((c) => c.timestamp >= focusWindow.from)
+          );
+          const toIndex = Math.max(fromIndex, sorted.length - 1);
+          isApplyingProgrammaticRangeRef.current = true;
+          try {
+            if (typeof timeScale.setVisibleLogicalRange === 'function') {
+              timeScale.setVisibleLogicalRange({
+                from: fromIndex,
+                to: toIndex,
+              });
+            } else if (typeof timeScale.setVisibleRange === 'function') {
+              timeScale.setVisibleRange({
+                from: focusWindow.from as UTCTimestamp,
+                to: focusWindow.to as UTCTimestamp,
+              });
+            }
+          } finally {
+            queueMicrotask(() => {
+              isApplyingProgrammaticRangeRef.current = false;
+            });
+          }
+          viewingLogicalRangeRef.current = {
             from: fromIndex,
             to: toIndex,
-          });
-        } else if (typeof timeScale.setVisibleRange === 'function') {
-          timeScale.setVisibleRange({
-            from: focusWindow.from as UTCTimestamp,
-            to: focusWindow.to as UTCTimestamp,
-          });
+            barCount: sorted.length,
+          };
+        } else {
+          isApplyingProgrammaticRangeRef.current = true;
+          try {
+            timeScale.fitContent();
+          } finally {
+            queueMicrotask(() => {
+              isApplyingProgrammaticRangeRef.current = false;
+            });
+          }
+          viewingLogicalRangeRef.current = {
+            from: 0,
+            to: sorted.length - 1,
+            barCount: sorted.length,
+          };
         }
-      } else {
-        timeScale.fitContent();
+
+        lastAppliedFocusRevisionRef.current = focusRevision;
+        lastAppliedTickerRef.current = ticker;
+      } else if (isTickerSwitch) {
+        // Branch B: Stock Switch - Carry over actual viewing scope
+        // Re-enable vertical auto-scaling for new stock
+        chart.applyOptions({
+          rightPriceScale: {
+            autoScale: true,
+          },
+        });
+        candleSeries.priceScale?.().applyOptions?.({ autoScale: true });
+        chart.priceScale?.('right')?.applyOptions?.({ autoScale: true });
+
+        const carryOver = priorViewingScope
+          ? computeCarryOverLogicalRange(priorViewingScope, priorViewingScope.barCount, sorted.length)
+          : null;
+
+        if (carryOver && typeof timeScale.setVisibleLogicalRange === 'function') {
+          isApplyingProgrammaticRangeRef.current = true;
+          try {
+            timeScale.setVisibleLogicalRange(carryOver);
+          } finally {
+            queueMicrotask(() => {
+              isApplyingProgrammaticRangeRef.current = false;
+            });
+          }
+          viewingLogicalRangeRef.current = {
+            from: carryOver.from,
+            to: carryOver.to,
+            barCount: sorted.length,
+          };
+        } else {
+          // Fallback if no prior scope or setVisibleLogicalRange unavailable
+          const focusWindow = computeTimeframeFocusWindow(sorted, timeframe);
+          if (focusWindow && typeof timeScale.setVisibleLogicalRange === 'function') {
+            const fromIndex = Math.max(0, sorted.findIndex((c) => c.timestamp >= focusWindow.from));
+            const toIndex = Math.max(fromIndex, sorted.length - 1);
+            timeScale.setVisibleLogicalRange({ from: fromIndex, to: toIndex });
+            viewingLogicalRangeRef.current = { from: fromIndex, to: toIndex, barCount: sorted.length };
+          }
+        }
+
+        lastAppliedTickerRef.current = ticker;
       }
-
-      // Ensure Y-axis autoScale remains active for the newly focused visible range
-      chart.applyOptions({
-        rightPriceScale: {
-          autoScale: true,
-        },
-      });
-      candleSeries.priceScale?.().applyOptions?.({ autoScale: true });
-      chart.priceScale?.('right')?.applyOptions?.({ autoScale: true });
-
-      lastFittedSeriesKeyRef.current = currentSeriesKey;
+      // Branch C: Same stock background refresh, leave timeScale and rightPriceScale untouched!
     }
     setViewportRevision((rev) => rev + 1);
   }, [ticker, timeframe, sortedCandles, focusRevision, computedIndicators]);
@@ -658,7 +766,68 @@ export function ChartContainer({
 
   return (
     <div
-      className="relative h-full w-full flex-1 bg-slate-950 select-none overflow-hidden"
+      className={`relative h-full w-full flex-1 bg-slate-950 select-none overflow-hidden ${
+        isDraggingChart ? 'cursor-grabbing [&_*]:!cursor-grabbing' : 'cursor-default'
+      }`}
+      onMouseDownCapture={(e) => {
+        if (e.button !== 0) return;
+        const target = e.target as HTMLElement | null;
+        if (!containerRef.current || !containerRef.current.contains(target)) return;
+
+        // Ensure click originated inside chart pane (not on price scale or time scale)
+        const rect = containerRef.current.getBoundingClientRect();
+        const localX = e.clientX - rect.left;
+        const localY = e.clientY - rect.top;
+        const priceAxisWidth = chartApiRef.current?.priceScale?.('right')?.width?.() ?? 60;
+        const timeAxisHeight = 26;
+        if (localX >= rect.width - priceAxisWidth || localY >= rect.height - timeAxisHeight) {
+          return;
+        }
+
+        const chart = chartApiRef.current;
+        if (!chart) return;
+
+        const rightScale = chart.priceScale?.('right');
+        const wasAutoScale = rightScale?.options?.()?.autoScale ?? true;
+
+        // Unlock vertical autoScale so lightweight-charts native scroll can pan vertically
+        rightScale?.applyOptions?.({ autoScale: false });
+        rightScale?.setAutoScale?.(false);
+
+        isDraggingChartRef.current = true;
+        setIsDraggingChart(true);
+        if (typeof document !== 'undefined') {
+          document.body.style.cursor = 'grabbing';
+        }
+
+        const startY = e.clientY;
+        let hasPannedVertically = false;
+
+        const handleWindowMouseMove = (moveEvent: MouseEvent) => {
+          if (!isDraggingChartRef.current) return;
+          if (Math.abs(moveEvent.clientY - startY) >= 3) {
+            hasPannedVertically = true;
+          }
+          setViewportRevision((rev) => rev + 1);
+        };
+
+        const handleWindowMouseUp = () => {
+          window.removeEventListener('mousemove', handleWindowMouseMove);
+          window.removeEventListener('mouseup', handleWindowMouseUp);
+          if (typeof document !== 'undefined') {
+            document.body.style.cursor = '';
+          }
+          isDraggingChartRef.current = false;
+          setIsDraggingChart(false);
+          if (!hasPannedVertically && wasAutoScale) {
+            rightScale?.setAutoScale?.(true);
+            rightScale?.applyOptions?.({ autoScale: true });
+          }
+        };
+
+        window.addEventListener('mousemove', handleWindowMouseMove);
+        window.addEventListener('mouseup', handleWindowMouseUp);
+      }}
       onMouseMove={(e) => {
         const rect = e.currentTarget.getBoundingClientRect();
         const cursorX = e.clientX - rect.left;
@@ -686,15 +855,16 @@ export function ChartContainer({
       }}
     >
       {/* Lightweight Charts Mount Node */}
-      <div ref={containerRef} className="h-full w-full" />
+      <div
+        ref={containerRef}
+        data-testid="chart-pane"
+        className={`h-full w-full ${isDraggingChart ? 'cursor-grabbing' : 'cursor-default'}`}
+      />
 
       {/* Watermark badge */}
       <div className="pointer-events-none absolute top-4 left-4 z-10 flex items-center gap-2 rounded-md border border-slate-800/80 bg-slate-900/75 px-3 py-1.5 backdrop-blur-sm">
         <span className="font-mono text-sm font-bold tracking-wider text-slate-100">
           {ticker}
-        </span>
-        <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-xs text-emerald-400">
-          {timeframe}
         </span>
         <span className="text-xs text-slate-400">
           {candles.length} bars

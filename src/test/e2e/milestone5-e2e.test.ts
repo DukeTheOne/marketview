@@ -1193,14 +1193,16 @@ describe('Tier 2: Boundary & Corner Cases (F1 to F9)', () => {
       expect(html).toContain('Loading quote...');
     });
 
-    it('T2-F6-5: supports switching timeframe tabs and highlights active timeframe', () => {
+    it('T2-F6-5: renders momentary timeframe quick-focus buttons without persistent toggled state', () => {
       const html = renderToStaticMarkup(
         React.createElement(TopHeaderBar, {
           ...baseHeaderProps,
           activeTimeframe: '1W',
         })
       );
-      expect(html).toContain('bg-emerald-500 text-slate-950 shadow-sm');
+      expect(html).toContain('data-testid="timeframe-btn-1W"');
+      expect(html).toContain('data-pulsing="false"');
+      expect(html).not.toContain('bg-emerald-500 text-slate-950 shadow-sm');
       expect(html).toContain('1W');
     });
   });

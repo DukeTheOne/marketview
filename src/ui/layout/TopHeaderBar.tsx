@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -45,7 +45,7 @@ const TIMEFRAMES: readonly Timeframe[] = PRIMARY_TIMEFRAMES;
 
 export interface TopHeaderBarProps {
   activeTicker: string;
-  activeTimeframe: Timeframe;
+  activeTimeframe?: Timeframe;
   quote: TickerQuote | undefined;
   providerId: string;
   isLoading: boolean;
@@ -115,7 +115,7 @@ export interface TopHeaderBarProps {
 
 export function TopHeaderBar({
   activeTicker,
-  activeTimeframe,
+  activeTimeframe: _activeTimeframe,
   quote,
   providerId,
   isLoading,
@@ -171,6 +171,29 @@ export function TopHeaderBar({
   );
   const [isShortcutsOpen, setIsShortcutsOpen] = useState(initialShortcutsOpen);
   const [isSyncOpen, setIsSyncOpen] = useState(initialSyncOpen);
+  const [pulsingTimeframe, setPulsingTimeframe] = useState<Timeframe | null>(null);
+  const pulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (pulseTimerRef.current) {
+        clearTimeout(pulseTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleTimeframeClick = (tf: Timeframe) => {
+    if (pulseTimerRef.current) {
+      clearTimeout(pulseTimerRef.current);
+    }
+    setPulsingTimeframe(tf);
+    pulseTimerRef.current = setTimeout(() => {
+      setPulsingTimeframe(null);
+      pulseTimerRef.current = null;
+    }, 380);
+    onSelectTimeframe(tf);
+  };
+
   const isPositive = (quote?.change ?? 0) >= 0;
 
   const isAnyPopoverOpen =
@@ -263,16 +286,19 @@ export function TopHeaderBar({
         <div className="flex items-center gap-3">
           <div className="flex items-center rounded-lg border border-slate-800 bg-slate-950 p-0.5">
             {TIMEFRAMES.map((tf) => {
-              const active = tf === activeTimeframe;
+              const isPulsing = pulsingTimeframe === tf;
               return (
                 <button
                   key={tf}
                   type="button"
-                  onClick={() => onSelectTimeframe(tf)}
-                  className={`rounded-md px-2.5 py-1 font-mono text-xs font-medium transition ${
-                    active
-                      ? 'bg-emerald-500 text-slate-950 shadow-sm'
-                      : 'text-slate-400 hover:text-slate-200'
+                  data-testid={`timeframe-btn-${tf}`}
+                  data-pulsing={isPulsing ? 'true' : 'false'}
+                  onClick={() => handleTimeframeClick(tf)}
+                  title={`Focus ${tf} scope`}
+                  className={`rounded-md px-2.5 py-1 font-mono text-xs font-medium transition-all duration-200 active:scale-90 ${
+                    isPulsing
+                      ? 'scale-95 bg-emerald-500/25 text-emerald-300 ring-1 ring-emerald-400/60 shadow-inner'
+                      : 'text-slate-400 hover:bg-slate-800/80 hover:text-slate-100'
                   }`}
                 >
                   {tf}
