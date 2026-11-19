@@ -11,6 +11,8 @@ import {
   Database,
   PanelLeftClose,
   PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   RefreshCw,
   X,
 } from 'lucide-react';
@@ -54,6 +56,10 @@ export interface TopHeaderBarProps {
   onSelectTimeframe: (timeframe: Timeframe) => void;
   onRefresh: () => void;
   onToggleJournal?: () => void;
+
+  // Split Panel Toggle props (Milestone 19)
+  isSplitPanelOpen?: boolean;
+  onToggleSplitPanel?: () => void;
 
   // Minimalist feature visibility toggles
   showJournal?: boolean;
@@ -124,6 +130,8 @@ export function TopHeaderBar({
   onSelectTimeframe,
   onRefresh,
   onToggleJournal,
+  isSplitPanelOpen = false,
+  onToggleSplitPanel,
   showJournal = true,
   showAlerts = true,
   showLivePollToggle = true,
@@ -306,6 +314,29 @@ export function TopHeaderBar({
               );
             })}
           </div>
+
+          {/* Stock Info Split Panel Toggle */}
+          {onToggleSplitPanel && (
+            <button
+              type="button"
+              data-testid="toggle-split-panel-btn"
+              aria-pressed={isSplitPanelOpen}
+              onClick={onToggleSplitPanel}
+              title="Toggle Stock Info Split Panel (i)"
+              className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-mono text-xs font-semibold transition ${
+                isSplitPanelOpen
+                  ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-300'
+                  : 'border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700 hover:text-white'
+              }`}
+            >
+              {isSplitPanelOpen ? (
+                <PanelRightClose className="h-3.5 w-3.5 text-emerald-400" />
+              ) : (
+                <PanelRightOpen className="h-3.5 w-3.5" />
+              )}
+              <span className="hidden sm:inline">Info</span>
+            </button>
+          )}
 
           {/* Trade Journal Drawer Toggle Button (Hidden in minimalist mode) */}
           {showJournal && (

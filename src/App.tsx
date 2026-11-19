@@ -31,7 +31,10 @@ import {
   type WorkspaceViewMode,
 } from './core';
 import { ChartContainer } from './features/chart/ChartContainer';
-import { DailySessionSplitView } from './features/chart/DailySessionSplitView';
+import {
+  DailySessionSplitView,
+  StockDetailSplitPanel,
+} from './features/chart/DailySessionSplitView';
 import { ChartToolbar } from './features/chart/overlays/ChartToolbar';
 import { OverlayCanvas } from './features/chart/overlays/OverlayCanvas';
 import { TopHeaderBar } from './ui/layout/TopHeaderBar';
@@ -122,6 +125,7 @@ export function App() {
 
   const [focusRevision, setFocusRevision] = useState(0);
   const [activeViewMode, setActiveViewMode] = useState<WorkspaceViewMode>('historical');
+  const [isSplitPanelOpen, setIsSplitPanelOpen] = useState(false);
   const [authSession, setAuthSession] = useState<CloudAuthSession | null>(() =>
     loadStoredAuthSession()
   );
@@ -329,6 +333,12 @@ export function App() {
         void preferencesStore.getState().updatePreferences({
           isSidebarCollapsed: !savedPreferences.isSidebarCollapsed,
         });
+        return;
+      }
+
+      if (keyLower === 'i') {
+        e.preventDefault();
+        setIsSplitPanelOpen((prev) => !prev);
         return;
       }
 
@@ -868,6 +878,8 @@ export function App() {
         pollIntervalSec={savedPreferences.pollIntervalSec}
         marketError={marketError}
         isLoading={isLoadingCandles}
+        isSplitPanelOpen={isSplitPanelOpen}
+        onToggleSplitPanel={() => setIsSplitPanelOpen((prev) => !prev)}
         showJournal={false}
         showAlerts={false}
         showLivePollToggle={false}
@@ -967,58 +979,73 @@ export function App() {
           annotationsCountByTicker={annotationsCountByTicker}
         />
 
-        {activeViewMode === 'daily_1d' ? (
-          <DailySessionSplitView
+        <div className="flex flex-1 min-w-0 overflow-hidden">
+          {activeViewMode === 'daily_1d' ? (
+            <DailySessionSplitView
+              ticker={activeTicker}
+              dailyCandles={activeCandles}
+              intradayCandles={activeIntradayCandles}
+              quote={activeQuote}
+              quotesByTicker={quotesByTicker}
+              isLoading={isLoadingCandles}
+              showSplitPanel={false}
+              onBackToHistoricalChart={() => setActiveViewMode('historical')}
+            />
+          ) : (
+            <ChartContainer
+              ticker={activeTicker}
+              timeframe={activeTimeframe}
+              candles={activeCandles}
+              intradayCandles={activeIntradayCandles}
+              isLoading={isLoadingCandles}
+              defaultIndicators={savedPreferences.activeIndicators}
+              focusRevision={focusRevision}
+              renderOverlayLayer={(hostContext) => (
+                <>
+                  <ChartToolbar
+                    activeTool={activeTool}
+                    annotationCount={activeTickerAnnotations.length}
+                    showAdvancedTools={false}
+                    onSelectTool={(tool) => {
+                      annotationStore.getState().setActiveTool(tool);
+                    }}
+                  />
+                  <OverlayCanvas
+                    hostContext={hostContext}
+                    annotations={annotations}
+                    activeTool={activeTool}
+                    selectedAnnotationId={selectedAnnotationId}
+                    onSelectTool={(tool) => {
+                      annotationStore.getState().setActiveTool(tool);
+                    }}
+                    onSelectAnnotation={(id) => {
+                      annotationStore.getState().selectAnnotation(id);
+                    }}
+                    onAddAnnotation={async (input) => {
+                      await annotationStore.getState().addAnnotation(input);
+                    }}
+                    onUpdateAnnotation={async (id, updates) => {
+                      await annotationStore.getState().updateAnnotation(id, updates);
+                    }}
+                    onDeleteAnnotation={async (id) => {
+                      await annotationStore.getState().deleteAnnotation(id);
+                      await preferencesStore.getState().recordTombstone(id);
+                    }}
+                  />
+                </>
+              )}
+            />
+          )}
+        </div>
+
+        {isSplitPanelOpen && (
+          <StockDetailSplitPanel
             ticker={activeTicker}
             dailyCandles={activeCandles}
             intradayCandles={activeIntradayCandles}
             quote={activeQuote}
-            isLoading={isLoadingCandles}
-            onBackToHistoricalChart={() => setActiveViewMode('historical')}
-          />
-        ) : (
-          <ChartContainer
-            ticker={activeTicker}
-            timeframe={activeTimeframe}
-            candles={activeCandles}
-            intradayCandles={activeIntradayCandles}
-            isLoading={isLoadingCandles}
-            defaultIndicators={savedPreferences.activeIndicators}
-            focusRevision={focusRevision}
-            renderOverlayLayer={(hostContext) => (
-              <>
-                <ChartToolbar
-                  activeTool={activeTool}
-                  annotationCount={activeTickerAnnotations.length}
-                  showAdvancedTools={false}
-                  onSelectTool={(tool) => {
-                    annotationStore.getState().setActiveTool(tool);
-                  }}
-                />
-                <OverlayCanvas
-                  hostContext={hostContext}
-                  annotations={annotations}
-                  activeTool={activeTool}
-                  selectedAnnotationId={selectedAnnotationId}
-                  onSelectTool={(tool) => {
-                    annotationStore.getState().setActiveTool(tool);
-                  }}
-                  onSelectAnnotation={(id) => {
-                    annotationStore.getState().selectAnnotation(id);
-                  }}
-                  onAddAnnotation={async (input) => {
-                    await annotationStore.getState().addAnnotation(input);
-                  }}
-                  onUpdateAnnotation={async (id, updates) => {
-                    await annotationStore.getState().updateAnnotation(id, updates);
-                  }}
-                  onDeleteAnnotation={async (id) => {
-                    await annotationStore.getState().deleteAnnotation(id);
-                    await preferencesStore.getState().recordTombstone(id);
-                  }}
-                />
-              </>
-            )}
+            quotesByTicker={quotesByTicker}
+            onClose={() => setIsSplitPanelOpen(false)}
           />
         )}
       </main>

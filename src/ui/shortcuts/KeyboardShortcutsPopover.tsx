@@ -22,6 +22,7 @@ const MINIMALIST_SHORTCUT_CATEGORIES: ShortcutCategory[] = [
     items: [
       { keys: ['/'], description: 'Focus ticker search input' },
       { keys: ['b'], description: 'Toggle Watchlist sidebar (Zen chart mode)' },
+      { keys: ['i'], description: 'Toggle Stock Info split panel' },
       {
         keys: ['1', '2', '3', '4', '5', '6'],
         description: 'Switch timeframe (1D, 1W, 1M, 3M, 6M, 1Y)',

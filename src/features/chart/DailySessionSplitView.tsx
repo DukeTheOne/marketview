@@ -1,5 +1,7 @@
 import React, { useMemo, useRef, useState } from 'react';
+import { X } from 'lucide-react';
 import {
+  buildTickerDetailedReport,
   extractLatestTradingDaySession,
   type OHLCVCandle,
   type TickerQuote,
@@ -10,8 +12,20 @@ export interface DailySessionSplitViewProps {
   dailyCandles: OHLCVCandle[];
   intradayCandles?: OHLCVCandle[];
   quote?: TickerQuote;
+  quotesByTicker?: Record<string, TickerQuote>;
   isLoading?: boolean;
+  showSplitPanel?: boolean;
+  onToggleSplitPanel?: () => void;
   onBackToHistoricalChart?: () => void;
+}
+
+export interface StockDetailSplitPanelProps {
+  ticker: string;
+  dailyCandles: OHLCVCandle[];
+  intradayCandles?: OHLCVCandle[];
+  quote?: TickerQuote;
+  quotesByTicker?: Record<string, TickerQuote>;
+  onClose?: () => void;
 }
 
 /**
@@ -35,12 +49,565 @@ function formatDateUtc(timestampSec: number): string {
   return `${year}-${month}-${day}`;
 }
 
+/**
+ * Unified Range Row combining low/high bounds and visual progress bar
+ * without repeating numbers in separate cards.
+ */
+function UnifiedRangeRow({
+  label,
+  low,
+  high,
+  positionPercent,
+  distanceFromHighPercent,
+  testId,
+  lowTestId,
+  highTestId,
+}: {
+  label: string;
+  low: number;
+  high: number;
+  positionPercent: number;
+  distanceFromHighPercent: number;
+  testId?: string;
+  lowTestId?: string;
+  highTestId?: string;
+}) {
+  return (
+    <div
+      data-testid={testId}
+      className="flex flex-col gap-1 rounded-lg border border-slate-800/80 bg-slate-900/60 p-2 sm:p-2.5"
+    >
+      <div className="flex items-center justify-between text-xs">
+        <span className="font-medium text-slate-400">{label}</span>
+        <span className="font-mono text-[11px] text-slate-400">
+          {distanceFromHighPercent <= 0 ? '' : '+'}
+          {distanceFromHighPercent.toFixed(1)}% from High
+        </span>
+      </div>
+      <div className="flex items-center gap-2.5 font-mono text-xs">
+        <span
+          data-testid={lowTestId}
+          className="text-slate-400 font-semibold min-w-[55px]"
+        >
+          ${low.toFixed(2)}
+        </span>
+        <div className="relative h-2 flex-1 rounded-full bg-slate-800 overflow-hidden">
+          <div
+            className="absolute top-0 bottom-0 left-0 bg-emerald-500/30 rounded-full"
+            style={{ width: `${positionPercent}%` }}
+          />
+          <div
+            className="absolute top-0 bottom-0 w-1.5 -ml-0.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]"
+            style={{ left: `${positionPercent}%` }}
+          />
+        </div>
+        <span
+          data-testid={highTestId}
+          className="text-slate-200 font-semibold min-w-[55px] text-right"
+        >
+          ${high.toFixed(2)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * StockDetailSplitPanel: Reusable right split panel with de-duplicated upper metrics
+ * and a reserved lower half for upcoming news and earnings reports.
+ */
+export function StockDetailSplitPanel({
+  ticker,
+  dailyCandles,
+  intradayCandles = [],
+  quote,
+  quotesByTicker,
+  onClose,
+}: StockDetailSplitPanelProps) {
+  const report = useMemo(() => {
+    return buildTickerDetailedReport(
+      ticker,
+      dailyCandles,
+      intradayCandles,
+      quote,
+      quotesByTicker
+    );
+  }, [ticker, dailyCandles, intradayCandles, quote, quotesByTicker]);
+
+  if (!report) {
+    return (
+      <aside
+        data-testid="daily-1d-report-pane"
+        className="flex w-full lg:w-1/2 flex-col bg-slate-950 p-5 overflow-y-auto items-center justify-center text-slate-500 border-l border-slate-800/80"
+      >
+        <span className="font-mono text-xs">
+          No detailed report data available for {ticker}
+        </span>
+      </aside>
+    );
+  }
+
+  return (
+    <aside
+      data-testid="daily-1d-report-pane"
+      className="flex w-full lg:w-1/2 flex-col bg-slate-950 p-4 sm:p-5 overflow-y-auto space-y-4 h-full border-l border-slate-800/80"
+    >
+      {/* Header: Instrument Name, Exchange, Type Badge & Optional Close */}
+      <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+        <div className="flex flex-col">
+          <div className="flex items-center gap-2">
+            <h2 className="font-mono text-base font-bold text-slate-100">
+              {report.ticker}
+            </h2>
+            <span
+              data-testid="daily-1d-instrument-badge"
+              className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider ${
+                report.instrumentType === 'etf'
+                  ? 'border border-cyan-500/30 bg-cyan-500/10 text-cyan-400'
+                  : 'border border-blue-500/30 bg-blue-500/10 text-blue-400'
+              }`}
+            >
+              {report.instrumentType === 'etf' ? 'ETF' : 'STOCK'}
+            </span>
+          </div>
+          <p className="text-xs text-slate-400 mt-0.5">
+            {report.name} • {report.exchange}
+          </p>
+        </div>
+
+        {onClose && (
+          <button
+            type="button"
+            data-testid="close-split-panel-btn"
+            onClick={onClose}
+            title="Close Split Panel"
+            className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-800 bg-slate-900 text-slate-400 transition hover:border-slate-700 hover:text-white"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+
+      {/* 1. Upper Half: De-Duplicated Key Numbers & Unified Range Bars */}
+      <section
+        data-testid="split-panel-upper-metrics"
+        className="flex flex-col gap-3"
+      >
+        <div
+          data-testid="daily-1d-key-numbers-section"
+          className="flex flex-col gap-3 rounded-xl border border-slate-800/70 bg-slate-900/40 p-3 sm:p-4"
+        >
+          {/* Row 1: 4-Column Point Metrics Strip (Pure point metrics, no range duplication) */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {/* Open & Overnight Gap */}
+            <div
+              data-testid="daily-1d-report-open-card"
+              className="flex flex-col rounded-lg border border-slate-800/80 bg-slate-900/80 p-2"
+            >
+              <span className="text-[11px] font-medium text-slate-500">Open</span>
+              <span
+                data-testid="daily-1d-open"
+                className="font-mono text-sm font-bold text-slate-100"
+              >
+                ${report.open.toFixed(2)}
+              </span>
+              <span
+                className={`font-mono text-[10px] font-semibold mt-0.5 ${
+                  report.overnightGap >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                }`}
+              >
+                Gap {report.overnightGap >= 0 ? '+' : ''}
+                {report.overnightGap.toFixed(2)} ({report.overnightGapPercent >= 0 ? '+' : ''}
+                {report.overnightGapPercent.toFixed(1)}%)
+              </span>
+            </div>
+
+            {/* Close & Intraday Move */}
+            <div
+              data-testid="daily-1d-report-close-card"
+              className="flex flex-col rounded-lg border border-slate-800/80 bg-slate-900/80 p-2"
+            >
+              <span className="text-[11px] font-medium text-slate-500">Close</span>
+              <span
+                data-testid="daily-1d-close"
+                className="font-mono text-sm font-bold text-slate-100"
+              >
+                ${report.close.toFixed(2)}
+              </span>
+              <span
+                className={`font-mono text-[10px] font-semibold mt-0.5 ${
+                  report.openToCloseChange >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                }`}
+              >
+                Intraday {report.openToCloseChange >= 0 ? '+' : ''}
+                {report.openToCloseChange.toFixed(2)} ({report.openToCloseChangePercent >= 0 ? '+' : ''}
+                {report.openToCloseChangePercent.toFixed(1)}%)
+              </span>
+            </div>
+
+            {/* Prev Close & Day Change */}
+            <div className="flex flex-col rounded-lg border border-slate-800/80 bg-slate-900/80 p-2">
+              <span className="text-[11px] font-medium text-slate-500">Prev Close</span>
+              <span
+                data-testid="daily-1d-prev-close"
+                className="font-mono text-sm font-bold text-slate-200"
+              >
+                ${report.previousClose.toFixed(2)}
+              </span>
+              <span
+                data-testid="daily-1d-change"
+                className={`font-mono text-[10px] font-semibold mt-0.5 ${
+                  report.change >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                }`}
+              >
+                {report.change >= 0 ? '+' : ''}
+                {report.change.toFixed(2)} ({report.changePercent >= 0 ? '+' : ''}
+                {report.changePercent.toFixed(1)}%)
+              </span>
+            </div>
+
+            {/* Volume & Context */}
+            <div className="flex flex-col rounded-lg border border-slate-800/80 bg-slate-900/80 p-2">
+              <span className="text-[11px] font-medium text-slate-500">Volume</span>
+              <span className="font-mono text-sm font-bold text-slate-100">
+                {(report.volume / 1_000_000).toFixed(2)}M
+              </span>
+              <span className="font-mono text-[10px] text-slate-400 mt-0.5 truncate">
+                {report.relativeVolume.toFixed(2)}x ({report.volumeStatusLabel.split(' ')[0]})
+              </span>
+            </div>
+          </div>
+
+          {/* Row 2: 3 Unified Range Bars (Every range appears once, combining numbers & progress bar) */}
+          <div className="flex flex-col gap-2 pt-1 border-t border-slate-800/50">
+            <UnifiedRangeRow
+              label="Today's Session Range"
+              low={report.dayRange.low}
+              high={report.dayRange.high}
+              positionPercent={report.dayRange.positionPercent}
+              distanceFromHighPercent={report.dayRange.distanceFromHighPercent}
+              lowTestId="daily-1d-low"
+              highTestId="daily-1d-high"
+            />
+            <UnifiedRangeRow
+              testId="daily-1d-report-52w-card"
+              label="52-Week Range"
+              low={report.week52Range.low}
+              high={report.week52Range.high}
+              positionPercent={report.week52Range.positionPercent}
+              distanceFromHighPercent={report.week52Range.distanceFromHighPercent}
+            />
+            <UnifiedRangeRow
+              testId="daily-1d-report-history-high-card"
+              label="Historical Range"
+              low={report.historyRange.low}
+              high={report.historyHigh}
+              positionPercent={report.historyRange.positionPercent}
+              distanceFromHighPercent={report.historyRange.distanceFromHighPercent}
+            />
+          </div>
+        </div>
+
+        {/* Row 3: Multi-Horizon Returns & Moving Averages */}
+        <div
+          data-testid="daily-1d-horizon-trend-section"
+          className="flex flex-col gap-2.5 rounded-xl border border-slate-800/70 bg-slate-900/40 p-3"
+        >
+          {/* 5-Horizon Returns Strip */}
+          <div className="grid grid-cols-5 gap-1.5">
+            {report.periodReturns.map((item) => {
+              const isUp = item.changePercent >= 0;
+              return (
+                <div
+                  key={item.label}
+                  className="flex flex-col items-center justify-center rounded-lg border border-slate-800 bg-slate-900/90 py-1.5 px-1 text-center"
+                >
+                  <span className="text-[10px] font-semibold text-slate-400">
+                    {item.label}
+                  </span>
+                  <span
+                    className={`font-mono text-[11px] font-bold mt-0.5 ${
+                      isUp ? 'text-emerald-400' : 'text-rose-400'
+                    }`}
+                  >
+                    {isUp ? '+' : ''}
+                    {item.changePercent.toFixed(1)}%
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Moving Averages Benchmarks */}
+          <div className="grid grid-cols-3 gap-2 pt-1 border-t border-slate-800/50">
+            {report.movingAverages.map((ma) => (
+              <div
+                key={ma.period}
+                className="flex flex-col rounded-lg border border-slate-800/70 bg-slate-900/60 p-1.5"
+              >
+                <div className="flex items-center justify-between text-[10px]">
+                  <span className="text-slate-400 font-medium">{ma.label}</span>
+                  <span
+                    className={`font-mono font-semibold text-[9px] rounded px-1 ${
+                      ma.isAbove
+                        ? 'bg-emerald-500/15 text-emerald-400'
+                        : 'bg-rose-500/15 text-rose-400'
+                    }`}
+                  >
+                    {ma.isAbove ? 'Above' : 'Below'}
+                  </span>
+                </div>
+                <div className="flex items-baseline justify-between mt-0.5 font-mono">
+                  <span className="text-[11px] font-bold text-slate-200">
+                    ${ma.price.toFixed(2)}
+                  </span>
+                  <span
+                    className={`text-[9px] ${
+                      ma.isAbove ? 'text-emerald-400' : 'text-rose-400'
+                    }`}
+                  >
+                    {ma.distancePercent >= 0 ? '+' : ''}
+                    {ma.distancePercent.toFixed(1)}%
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Row 4: Instrument-Tailored Pulse (ETF Breadth vs Stock 20D Pulse) */}
+        {report.instrumentType === 'etf' && report.etfBreadth && (
+          <div
+            data-testid="daily-1d-etf-breadth-section"
+            className="flex flex-col gap-2.5 rounded-xl border border-slate-800/70 bg-slate-900/40 p-3"
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+                  Market Breadth &amp; Constituents
+                </h3>
+                <p className="text-[11px] text-slate-400">
+                  {report.etfBreadth.indexLabel} ({report.etfBreadth.totalCount} stocks)
+                </p>
+              </div>
+              <span className="rounded bg-cyan-500/10 border border-cyan-500/25 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300">
+                ETF Pulse
+              </span>
+            </div>
+
+            {/* Counts of Up vs Down */}
+            <div className="grid grid-cols-3 gap-2 text-center font-mono">
+              <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-1.5">
+                <span className="text-[9px] uppercase text-emerald-400 block">Went Up</span>
+                <span
+                  data-testid="daily-1d-etf-up-count"
+                  className="text-xs font-bold text-emerald-300"
+                >
+                  ▲ {report.etfBreadth.advancingCount} ({report.etfBreadth.advancingPercent.toFixed(1)}%)
+                </span>
+              </div>
+
+              <div className="rounded-lg border border-slate-700/60 bg-slate-800/40 p-1.5">
+                <span className="text-[9px] uppercase text-slate-400 block">Flat</span>
+                <span className="text-xs font-bold text-slate-300">
+                  • {report.etfBreadth.unchangedCount} ({report.etfBreadth.unchangedPercent.toFixed(1)}%)
+                </span>
+              </div>
+
+              <div className="rounded-lg border border-rose-500/20 bg-rose-500/10 p-1.5">
+                <span className="text-[9px] uppercase text-rose-400 block">Went Down</span>
+                <span
+                  data-testid="daily-1d-etf-down-count"
+                  className="text-xs font-bold text-rose-300"
+                >
+                  ▼ {report.etfBreadth.decliningCount} ({report.etfBreadth.decliningPercent.toFixed(1)}%)
+                </span>
+              </div>
+            </div>
+
+            {/* Stacked Breadth Bar */}
+            <div className="flex h-2 w-full rounded-full overflow-hidden bg-slate-800">
+              <div
+                className="bg-emerald-500"
+                style={{ width: `${report.etfBreadth.advancingPercent}%` }}
+              />
+              <div
+                className="bg-slate-500"
+                style={{ width: `${report.etfBreadth.unchangedPercent}%` }}
+              />
+              <div
+                className="bg-rose-500"
+                style={{ width: `${report.etfBreadth.decliningPercent}%` }}
+              />
+            </div>
+
+            {/* Top Holdings Pulse */}
+            <div className="flex flex-col gap-1 pt-1 border-t border-slate-800/50">
+              <span className="text-[11px] font-semibold text-slate-400">
+                Top Holdings Pulse
+              </span>
+              <div
+                data-testid="daily-1d-etf-top-holdings"
+                className="flex flex-col divide-y divide-slate-800/60 font-mono text-xs"
+              >
+                {report.etfBreadth.topHoldings.map((h) => {
+                  const isUp = h.changePercent >= 0;
+                  return (
+                    <div
+                      key={h.ticker}
+                      className="flex items-center justify-between py-1 first:pt-0 last:pb-0"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-slate-200">{h.ticker}</span>
+                        <span className="text-[11px] text-slate-500 font-sans truncate max-w-[140px]">
+                          {h.name}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-slate-400">
+                          {h.weightPercent.toFixed(1)}% wt
+                        </span>
+                        <span
+                          className={`rounded px-1.5 py-0.2 font-bold text-[10px] ${
+                            isUp
+                              ? 'bg-emerald-500/15 text-emerald-400'
+                              : 'bg-rose-500/15 text-rose-400'
+                          }`}
+                        >
+                          {isUp ? '+' : ''}
+                          {h.changePercent.toFixed(2)}%
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {report.instrumentType === 'stock' && report.stockPulse && (
+          <div
+            data-testid="daily-1d-stock-pulse-section"
+            className="flex flex-col gap-2.5 rounded-xl border border-slate-800/70 bg-slate-900/40 p-3"
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+                  20-Session Pulse &amp; Volatility
+                </h3>
+                <p className="text-[11px] text-slate-400">
+                  Last {report.stockPulse.lookbackDays} Trading Days
+                </p>
+              </div>
+              <span className="rounded bg-blue-500/10 border border-blue-500/25 px-1.5 py-0.5 font-mono text-[10px] text-blue-300">
+                Stock Pulse
+              </span>
+            </div>
+
+            {/* Counts of Up vs Down Days */}
+            <div className="grid grid-cols-2 gap-2 text-center font-mono">
+              <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-1.5">
+                <span className="text-[9px] uppercase text-emerald-400 block">Up Days</span>
+                <span
+                  data-testid="daily-1d-stock-up-days"
+                  className="text-xs font-bold text-emerald-300"
+                >
+                  ▲ {report.stockPulse.upDaysCount} Up Days ({report.stockPulse.upDaysPercent.toFixed(0)}%)
+                </span>
+              </div>
+
+              <div className="rounded-lg border border-rose-500/20 bg-rose-500/10 p-1.5">
+                <span className="text-[9px] uppercase text-rose-400 block">Down Days</span>
+                <span
+                  data-testid="daily-1d-stock-down-days"
+                  className="text-xs font-bold text-rose-300"
+                >
+                  ▼ {report.stockPulse.downDaysCount} Down Days ({report.stockPulse.downDaysPercent.toFixed(0)}%)
+                </span>
+              </div>
+            </div>
+
+            {/* Stacked 20D Bar */}
+            <div className="flex h-2 w-full rounded-full overflow-hidden bg-slate-800">
+              <div
+                className="bg-emerald-500"
+                style={{ width: `${report.stockPulse.upDaysPercent}%` }}
+              />
+              <div
+                className="bg-rose-500"
+                style={{ width: `${report.stockPulse.downDaysPercent}%` }}
+              />
+            </div>
+
+            {/* Range Strength & ATR Details */}
+            <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-800/50">
+              <div className="flex flex-col rounded-lg border border-slate-800/70 bg-slate-900/60 p-1.5">
+                <span className="text-[10px] text-slate-400 font-medium">Session Strength</span>
+                <span className="font-mono text-[11px] font-bold text-slate-200 mt-0.5">
+                  {report.stockPulse.closeStrengthLabel}
+                </span>
+                <span className="text-[9px] font-mono text-slate-500">
+                  Closed at {report.stockPulse.closeLocationPercent.toFixed(0)}% of range
+                </span>
+              </div>
+
+              <div className="flex flex-col rounded-lg border border-slate-800/70 bg-slate-900/60 p-1.5">
+                <span className="text-[10px] text-slate-400 font-medium">Typical Daily Swing (14D ATR)</span>
+                <span className="font-mono text-[11px] font-bold text-slate-200 mt-0.5">
+                  ${report.stockPulse.atr14.toFixed(2)} ({report.stockPulse.atr14Percent.toFixed(1)}%)
+                </span>
+                <span className="text-[9px] font-mono text-slate-500">
+                  {report.stockPulse.todayRangeRatioVsAtr}x typical daily range
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* 2. Bottom Half: Reserved Clean Space for Future News & Earnings Reports */}
+      <section
+        data-testid="split-panel-lower-reserved"
+        className="flex flex-1 min-h-[160px] flex-col rounded-xl border border-dashed border-slate-800/70 bg-slate-900/20 p-4 text-center justify-center items-center"
+      >
+        <div className="max-w-xs space-y-1.5 text-slate-500">
+          <div className="mx-auto flex h-8 w-8 items-center justify-center rounded-full bg-slate-800/80 text-slate-400">
+            <svg
+              className="h-4 w-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="1.5"
+                d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z"
+              />
+            </svg>
+          </div>
+          <p className="font-mono text-xs font-semibold text-slate-400">
+            News &amp; Earnings Reports
+          </p>
+          <p className="text-[11px] text-slate-500">
+            Space reserved for upcoming live market headlines, company press releases, and SEC earnings reports.
+          </p>
+        </div>
+      </section>
+    </aside>
+  );
+}
+
 export function DailySessionSplitView({
   ticker,
   dailyCandles,
   intradayCandles = [],
   quote,
+  quotesByTicker,
   isLoading = false,
+  showSplitPanel = true,
+  onToggleSplitPanel,
   onBackToHistoricalChart,
 }: DailySessionSplitViewProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -87,7 +654,6 @@ export function DailySessionSplitView({
     );
   }
 
-  const isPositive = session.change >= 0;
   const isSessionGreen = session.close >= session.previousClose;
   const strokeColor = isSessionGreen ? '#10b981' : '#f43f5e';
   const fillGradientId = `grad-1d-${ticker}-${isSessionGreen ? 'green' : 'red'}`;
@@ -147,12 +713,14 @@ export function DailySessionSplitView({
 
   return (
     <div className="flex flex-1 flex-col lg:flex-row h-full w-full overflow-hidden bg-slate-950 select-none">
-      {/* Left Half: Dedicated Latest Trading Day (1D) Chart */}
+      {/* Left Area: Clean Dedicated Latest Trading Day (1D) Chart */}
       <section
         data-testid="daily-1d-chart-pane"
-        className="flex w-full lg:w-1/2 flex-col border-b lg:border-b-0 lg:border-r border-slate-800/80 bg-slate-950 p-4 overflow-hidden"
+        className={`flex flex-col border-b lg:border-b-0 ${
+          showSplitPanel ? 'w-full lg:w-1/2 lg:border-r' : 'w-full flex-1'
+        } border-slate-800/80 bg-slate-950 p-4 overflow-hidden`}
       >
-        {/* Top Session Header & Return Action */}
+        {/* Top Session Header: Date, 1D Badge & Return Action (No redundant 6-column metrics strip) */}
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/60 pb-3">
           <div className="flex items-center gap-2.5">
             <span className="font-mono text-lg font-bold tracking-wider text-slate-100">
@@ -177,56 +745,6 @@ export function DailySessionSplitView({
               <span>← Historical Chart</span>
             </button>
           )}
-        </div>
-
-        {/* Scannable Session Metrics Strip */}
-        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 py-3 border-b border-slate-800/40">
-          <div className="flex flex-col">
-            <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Open</span>
-            <span data-testid="daily-1d-open" className="font-mono text-sm font-semibold text-slate-200">
-              ${session.open.toFixed(2)}
-            </span>
-          </div>
-
-          <div className="flex flex-col">
-            <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Close</span>
-            <span data-testid="daily-1d-close" className="font-mono text-sm font-semibold text-slate-100">
-              ${session.close.toFixed(2)}
-            </span>
-          </div>
-
-          <div className="flex flex-col">
-            <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">High</span>
-            <span data-testid="daily-1d-high" className="font-mono text-sm font-semibold text-emerald-400">
-              ${session.high.toFixed(2)}
-            </span>
-          </div>
-
-          <div className="flex flex-col">
-            <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Low</span>
-            <span data-testid="daily-1d-low" className="font-mono text-sm font-semibold text-rose-400">
-              ${session.low.toFixed(2)}
-            </span>
-          </div>
-
-          <div className="flex flex-col">
-            <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Prev Close</span>
-            <span data-testid="daily-1d-prev-close" className="font-mono text-sm font-semibold text-slate-300">
-              ${session.previousClose.toFixed(2)}
-            </span>
-          </div>
-
-          <div className="flex flex-col">
-            <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Change</span>
-            <span
-              data-testid="daily-1d-change"
-              className={`font-mono text-sm font-bold ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}
-            >
-              {session.change >= 0 ? '+' : ''}
-              {session.change.toFixed(2)} ({session.changePercent >= 0 ? '+' : ''}
-              {session.changePercent.toFixed(2)}%)
-            </span>
-          </div>
         </div>
 
         {/* Intraday Price Curve for the Latest Trading Session */}
@@ -360,7 +878,7 @@ export function DailySessionSplitView({
             <div
               className="pointer-events-none absolute z-20 flex flex-col gap-0.5 rounded border border-slate-700/80 bg-slate-900/95 px-2.5 py-1.5 font-mono text-xs shadow-xl backdrop-blur-sm"
               style={{
-                left: `${Math.min(activeHoverX / chartWidth * 100, 75)}%`,
+                left: `${Math.min((activeHoverX / chartWidth) * 100, 75)}%`,
                 top: '12px',
               }}
             >
@@ -386,52 +904,17 @@ export function DailySessionSplitView({
         </div>
       </section>
 
-      {/* Right Half: Reserved Daily Report Space (Clean blank container ready for future metrics) */}
-      <aside
-        data-testid="daily-1d-report-pane"
-        className="flex w-full lg:w-1/2 flex-col bg-slate-950 p-6 overflow-y-auto"
-      >
-        <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
-          <div className="flex items-center gap-2">
-            <h2 className="font-mono text-sm font-semibold tracking-wide text-slate-200">
-              Daily Report & Order Flow
-            </h2>
-            <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
-              Reserved
-            </span>
-          </div>
-        </div>
-
-        {/* Intentionally blank placeholder container ready for future daily metrics */}
-        <div
-          data-testid="daily-1d-report-placeholder"
-          className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-slate-800/70 bg-slate-900/20 p-8 text-center mt-6"
-        >
-          {/*
-            TODO(opening-hours-live-update): Keep 1D view as static latest trading day snapshot for now;
-            live opening-hours streaming to be added in a future slice.
-          */}
-          <div className="max-w-md space-y-2 text-slate-400">
-            <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-slate-800/80 text-slate-300">
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="1.5"
-                  d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
-                />
-              </svg>
-            </div>
-            <p className="font-mono text-xs font-semibold text-slate-300">
-              Daily Report Space
-            </p>
-            <p className="text-xs text-slate-500 leading-relaxed">
-              This space is reserved for detailed session analysis: Open/Close auction breakdown,
-              Put vs. Call volume distribution, and order flow metrics.
-            </p>
-          </div>
-        </div>
-      </aside>
+      {/* Right Area: StockDetailSplitPanel (Rendered when showSplitPanel is true) */}
+      {showSplitPanel && (
+        <StockDetailSplitPanel
+          ticker={ticker}
+          dailyCandles={dailyCandles}
+          intradayCandles={intradayCandles}
+          quote={quote}
+          quotesByTicker={quotesByTicker}
+          onClose={onToggleSplitPanel}
+        />
+      )}
     </div>
   );
 }
